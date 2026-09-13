@@ -11,14 +11,14 @@ from avalanche_ml.models.evaluation import (
     per_elevation_band_metrics,
 )
 from avalanche_ml.models.lstm_model import HierarchicalLSTM
-from avalanche_ml.models.lstm_train import predict, train_lstm
+from avalanche_ml.models.lstm_train import get_device, predict, train_lstm
 from avalanche_ml.models.tracking import configure_tracking, flatten_metrics, log_training_run
 
 
 def evaluate_lstm(
     model: HierarchicalLSTM,
     dataloader,
-    device: str = "cpu",
+    device: str = get_device(),
 ) -> dict:
     predictions = predict(model, dataloader, device=device)
 
@@ -76,7 +76,7 @@ def run_lstm_training_pipeline(
     lr: float = 1e-3,
     patience: int = 10,
     mlflow_tracking_dir: str | None = None,
-    device: str = "cpu",
+    device: str = get_device(),
 ) -> dict:
     n_features = next(iter(train_loader))["branch1"].shape[2]
     model = HierarchicalLSTM(input_size=n_features)

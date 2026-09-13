@@ -12,6 +12,14 @@ from avalanche_ml.features.alignment import PROBLEM_TYPE_FLAGS
 from avalanche_ml.models.lstm_model import HierarchicalLSTM
 
 
+def get_device() -> torch.device:
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    elif torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
+
+
 class FocalLoss(nn.Module):
     def __init__(self, gamma: float = 2.0, alpha: torch.Tensor | None = None):
         super().__init__()
@@ -65,7 +73,7 @@ def train_lstm(
     weight_decay: float = 1e-5,
     patience: int = 10,
     max_grad_norm: float = 1.0,
-    device: str = "cpu",
+    device: str | torch.device = get_device(),
 ) -> tuple[HierarchicalLSTM, dict]:
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -150,7 +158,7 @@ def _validate(model: HierarchicalLSTM, loader, device: str) -> float:
 def predict(
     model: HierarchicalLSTM,
     dataloader,
-    device: str = "cpu",
+    device: str | torch.device = get_device(),
 ) -> pd.DataFrame:
     model.eval()
     rows = []

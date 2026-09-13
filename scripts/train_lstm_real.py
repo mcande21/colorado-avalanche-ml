@@ -33,11 +33,11 @@ from avalanche_ml.models.evaluation import (
     per_elevation_band_metrics,
 )
 from avalanche_ml.models.lstm_model import HierarchicalLSTM
-from avalanche_ml.models.lstm_train import combined_loss, save_model
+from avalanche_ml.models.lstm_train import combined_loss, get_device, save_model
 
 DB_PATH = "data/avalanche.duckdb"
 MODEL_DIR = "models"
-DEVICE = "cpu"
+DEVICE = get_device()
 
 BRANCH1_DAYS = 7
 BRANCH2_DAYS = 30
@@ -260,7 +260,7 @@ def train_loop(
     epochs: int = 50,
     lr: float = 1e-3,
     patience: int = 10,
-    device: str = "cpu",
+    device: str = get_device(),
 ) -> tuple[HierarchicalLSTM, dict]:
     model = model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-5)
@@ -341,7 +341,7 @@ def train_loop(
 
 
 def predict_all(
-    model: HierarchicalLSTM, loader: DataLoader, device: str = "cpu",
+    model: HierarchicalLSTM, loader: DataLoader, device: str = get_device(),
 ) -> pd.DataFrame:
     model.eval()
     rows = []
