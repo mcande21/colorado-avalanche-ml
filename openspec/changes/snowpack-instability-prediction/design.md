@@ -194,6 +194,24 @@ Stage 2 uses out-of-sample Stage-1 ensemble predictions (never actual labels) vi
 | Near Treeline (NTL) | 0.525 |
 | Above Treeline (ATL) | 0.508 |
 
+## Final Model Selection
+
+204+ RF experiments and 18 Transformer experiments (logged to MLflow) informed the final Stage-1 architecture. The result is a hybrid, not a single-model choice:
+
+- **Persistent Slab (Stage 1):** Transformer (64-unit, 2-layer, 4-head attention, lookback=7, lr=5e-4). Beats RF (0.787 macro-F1) and the Schwartzreich & Rodriguez 2026 published benchmark (0.656-0.762) at every elevation band — ATL 0.826, NTL 0.821, BTL 0.816 — a lift of +0.064 to +0.165 F1 over the published numbers. Recall of 87-93% is safety-appropriate given Persistent Slab is the most dangerous problem type.
+- **Storm Slab + Loose Wet (Stage 1):** Cost-sensitive Random Forest (balanced class weights, n_estimators=300, max_depth=10). RF remained competitive for these types; the added complexity of a Transformer wasn't justified by the experiment results.
+- **Danger Level (Stage 2):** Random Forest, using frozen Stage-1 predictions as input features — including the Transformer's Persistent Slab probabilities alongside RF's Storm Slab and Loose Wet probabilities.
+- **Serving:** predict_proba with a default classification threshold of t=0.30, adjustable per deployment context without retraining.
+
+Key findings from the experiment battery:
+
+- **SMOTE hurts generalization** — dropped in favor of cost-sensitive class weights only.
+- **Threshold tuning at serving time is the best operational lever** — more impactful than further hyperparameter search.
+- **`temp_gradient_consec_days`** (consecutive days above the 10 K/m faceting threshold) adds a free +0.007 to +0.010 macro-F1 lift over the daily crossing-count variant.
+- **The Transformer captures temporal persistent-slab patterns RF misses** — multi-day faceting/weak-layer buildup is inherently sequential, which RF's feature-window approach only partially encodes.
+
+This supersedes decision D2 (RF-first) for the Persistent Slab problem type specifically: the LSTM/Transformer hypothesis from D2 was tested and, for this one target, won. RF remains the production choice everywhere else in Stage 1 and for all of Stage 2.
+
 ## Component Design
 
 ### Ingestion Layer

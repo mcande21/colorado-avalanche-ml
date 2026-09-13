@@ -133,23 +133,27 @@
 
 ## 19. Data Expansion (Phase 1E)
 
-- [ ] 19.1 Download OAP CSV from `https://github.com/scottcha/OpenAvalancheProject/raw/master/Data/CleanedForecastsNWAC_CAIC_UAC_CAC.V1.2013-2021.zip` and filter to Colorado zones (~11,675 rows, 10 zones, Dec 2013 - Apr 2021); verify by confirming row count and zone coverage
-- [ ] 19.2 Extend avalanche.org API ingestion to Nov 2019 (was Nov 2022), pulling product listings via `GET products?avalanche_center_id=CAIC&date_start=&date_end=`; verify by confirming products are retrieved back to Nov 2019
-- [ ] 19.3 Pull problem type data via `GET product/{id}` detail endpoint for each product, extracting `forecast_avalanche_problems` array with type name, likelihood, location, and size; verify by confirming problem types are stored for a sample of known forecast dates
-- [ ] 19.4 Ingest OAP problem types (8 types: LooseDry, LooseWet, StormSlabs, WindSlab, PersistentSlab, DeepPersistentSlab, WetSlabs, Cornices, Glide) with likelihood, size, and aspect-elevation octagon; verify by confirming all 8 types appear in ingested data with associated metadata
-- [ ] 19.5 Download zone boundary GeoJSON from OAP repo (`Data/USAvalancheRegions.geojson`); verify by confirming polygon geometries cover all 10 Colorado zones
-- [ ] 19.6 Replace haversine zone-station mapping with GeoJSON polygon containment testing; verify by comparing old and new mappings and confirming improved accuracy for zones with irregular boundaries
-- [ ] 19.7 Cross-validate OAP vs API labels in overlap period (Nov 2019 - Apr 2021), logging discrepancies; verify by confirming mismatch rate per zone is below 10% for danger ratings
-- [ ] 19.8 Reassemble training matrix with 12 seasons of continuous data (Dec 2013 - present); verify by confirming feature matrix covers all seasons without gaps
-- [ ] 19.9 Update temporal split to train: 2013-2022 / val: 2022-2024 / test: 2024-2025; verify by confirming split boundaries match and no temporal leakage
+- [x] 19.1 Download OAP CSV from `https://github.com/scottcha/OpenAvalancheProject/raw/master/Data/CleanedForecastsNWAC_CAIC_UAC_CAC.V1.2013-2021.zip` and filter to Colorado zones (~11,675 rows, 10 zones, Dec 2013 - Apr 2021); verify by confirming row count and zone coverage
+- [x] 19.2 Extend avalanche.org API ingestion to Nov 2019 (was Nov 2022), pulling product listings via `GET products?avalanche_center_id=CAIC&date_start=&date_end=`; verify by confirming products are retrieved back to Nov 2019
+- [x] 19.3 Pull problem type data via `GET product/{id}` detail endpoint for each product, extracting `forecast_avalanche_problems` array with type name, likelihood, location, and size; verify by confirming problem types are stored for a sample of known forecast dates
+- [x] 19.4 Ingest OAP problem types (8 types: LooseDry, LooseWet, StormSlabs, WindSlab, PersistentSlab, DeepPersistentSlab, WetSlabs, Cornices, Glide) with likelihood, size, and aspect-elevation octagon; verify by confirming all 8 types appear in ingested data with associated metadata
+- [x] 19.5 Download zone boundary GeoJSON from OAP repo (`Data/USAvalancheRegions.geojson`); verify by confirming polygon geometries cover all 10 Colorado zones
+- [x] 19.6 Replace haversine zone-station mapping with GeoJSON polygon containment testing; verify by comparing old and new mappings and confirming improved accuracy for zones with irregular boundaries
+- [x] 19.7 Cross-validate OAP vs API labels in overlap period (Nov 2019 - Apr 2021), logging discrepancies; verify by confirming mismatch rate per zone is below 10% for danger ratings
+- [x] 19.8 Reassemble training matrix with 12 seasons of continuous data (Dec 2013 - present); verify by confirming feature matrix covers all seasons without gaps
+- [x] 19.9 Update temporal split to train: 2013-2022 / val: 2022-2024 / test: 2024-2025; verify by confirming split boundaries match and no temporal leakage
 
 ## 20. Architecture Upgrade (Phase 1F)
 
-- [ ] 20.1 Refactor RF to per-elevation-band models: 9 Stage-1 models (3 problem types x 3 bands) + 3 Stage-2 models (1 per band) = 12 total; verify by confirming all 12 models train and produce predictions
-- [ ] 20.2 Implement frozen Stage-1 prediction protocol (staged chronological split, out-of-sample predictions only, never actual labels as Stage-2 input); verify by confirming Stage-2 training uses only out-of-sample Stage-1 predictions
-- [ ] 20.3 Train Stage 1 with problem type labels from OAP + API sources (Persistent Slab, Slab Problem [storm+wind merged], Loose Wet); verify by confirming binary classifiers produce calibrated probabilities for each type
-- [ ] 20.4 Implement soft-voting ensemble combining top-3 RF configs by macro-F1; verify by confirming ensemble predictions average probability distributions and improve over single-model baseline
-- [ ] 20.5 Add Transformer option (64-unit, 2-layer) for Persistent Slab Stage-1 model; verify by confirming Transformer trains and is compared against LSTM and RF for this specific target
-- [ ] 20.6 Update physics features: replace daily crossing count with consecutive-day duration accumulation for temp_gradient_days; verify by confirming the feature weights consecutive days above 10 K/m threshold
-- [ ] 20.7 Retrain and evaluate against Schwartzreich 2026 benchmark (macro-F1: BTL 0.544, NTL 0.525, ATL 0.508); verify by confirming metrics are computed per band and reported alongside benchmark
-- [ ] 20.8 Run full experiment battery on expanded 12-season dataset with updated architecture; verify by confirming MLflow logs all runs with metrics, model artifacts, and comparison tables
+- [x] 20.1 Refactor RF to per-elevation-band models: 9 Stage-1 models (3 problem types x 3 bands) + 3 Stage-2 models (1 per band) = 12 total; verify by confirming all 12 models train and produce predictions
+- [x] 20.2 Implement frozen Stage-1 prediction protocol (staged chronological split, out-of-sample predictions only, never actual labels as Stage-2 input); verify by confirming Stage-2 training uses only out-of-sample Stage-1 predictions
+- [x] 20.3 Train Stage 1 with problem type labels from OAP + API sources (Persistent Slab, Slab Problem [storm+wind merged], Loose Wet); verify by confirming binary classifiers produce calibrated probabilities for each type
+- [x] 20.4 Implement soft-voting ensemble combining top-3 RF configs by macro-F1; verify by confirming ensemble predictions average probability distributions and improve over single-model baseline
+- [x] 20.5 Add Transformer option (64-unit, 2-layer) for Persistent Slab Stage-1 model; verify by confirming Transformer trains and is compared against LSTM and RF for this specific target
+- [x] 20.6 Update physics features: replace daily crossing count with consecutive-day duration accumulation for temp_gradient_days; verify by confirming the feature weights consecutive days above 10 K/m threshold
+- [x] 20.7 Retrain and evaluate against Schwartzreich 2026 benchmark (macro-F1: BTL 0.544, NTL 0.525, ATL 0.508); verify by confirming metrics are computed per band and reported alongside benchmark
+- [x] 20.8 Run full experiment battery on expanded 12-season dataset with updated architecture; verify by confirming MLflow logs all runs with metrics, model artifacts, and comparison tables
+
+## Status
+
+Phase 1 (sections 1-20, through Phase 1F Architecture Upgrade) is complete and stable with the hybrid Transformer + RF architecture. Phase 2 (Spatial Downscaling, sections 15-18) is deferred to the separate `terrain-weather-ml` project rather than continued here.

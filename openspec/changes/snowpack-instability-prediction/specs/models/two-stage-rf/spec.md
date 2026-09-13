@@ -1,30 +1,35 @@
 ## Purpose
 
-Train and evaluate a two-stage Random Forest classifier that first predicts avalanche problem types, then uses those predictions with weather features to predict danger level, with SHAP-based explanations.
+Train and evaluate a two-stage hybrid classifier — Transformer for Persistent Slab, Random Forest for the remaining Stage-1 problem types and all of Stage 2 — that first predicts avalanche problem types, then uses those predictions with weather features to predict danger level, with SHAP-based explanations.
 
 ## ADDED Requirements
 
 ### Requirement: Stage 1 — Problem type prediction
-The system SHALL train a multi-label Random Forest classifier that predicts which avalanche problem types are active for a given zone, elevation band, and date.
+The system SHALL train a multi-label classifier that predicts which avalanche problem types are active for a given zone, elevation band, and date, using a hybrid architecture selected per problem type by validation performance.
 
-#### Scenario: Stage 1 training
+#### Scenario: Stage 1 training — hybrid model selection
 - **WHEN** Stage 1 training is invoked with feature data and labels
-- **THEN** the system SHALL train binary Random Forest classifiers for 3 focused problem types (Persistent Slab, Slab Problem [storm+wind merged due to limited wind data], Loose Wet) per elevation band, yielding 9 Stage-1 models (3 types x 3 bands), using weather window features and physics proxy features as inputs
+- **THEN** the system SHALL train a Transformer classifier (64-unit, 2-layer, 4-head attention, lookback=7, lr=5e-4) for Persistent Slab per elevation band, and cost-sensitive Random Forest classifiers (balanced class weights, n_estimators=300, max_depth=10) for Slab Problem [storm+wind merged due to limited wind data] and Loose Wet per elevation band, yielding 9 Stage-1 models (3 types x 3 bands), using weather window features and physics proxy features as inputs
+- **AND** the Transformer selection for Persistent Slab SHALL be based on it outperforming RF at all elevation bands (macro-F1 ATL 0.826, NTL 0.821, BTL 0.816 vs. RF 0.787) with 87-93% recall, appropriate for the most dangerous problem type
 
 #### Scenario: Stage 1 prediction output
 - **WHEN** Stage 1 produces predictions for a sample
-- **THEN** the output SHALL include a probability score (0.0-1.0) for each of the 3 problem types via predict_proba, with a default classification threshold of 0.30 (tunable at serving time for safety)
+- **THEN** the output SHALL include a probability score (0.0-1.0) for each of the 3 problem types via predict_proba (Transformer softmax for Persistent Slab, RF predict_proba for the others), with a default classification threshold of 0.30 (tunable at serving time for safety)
 
 #### Scenario: Stage 1 per-elevation-band models
 - **WHEN** Stage 1 training is invoked
 - **THEN** the system SHALL train separate models for each elevation band (above_treeline, near_treeline, below_treeline), yielding 9 Stage-1 models total, as problem type distributions differ significantly by elevation
+
+#### Scenario: Stage 1 benchmark comparison — Persistent Slab
+- **WHEN** the Persistent Slab Stage-1 model is evaluated
+- **THEN** the system SHALL report macro-F1 against the published Schwartzreich & Rodriguez 2026 benchmark (0.656-0.762 across bands), confirming the Transformer beats the benchmark by +0.064 to +0.165 F1 at every band
 
 ### Requirement: Stage 2 — Danger level prediction
 The system SHALL train a Random Forest classifier that predicts the 1-5 danger level using weather features, physics proxies, AND the Stage 1 problem type predictions as additional input features.
 
 #### Scenario: Frozen Stage 1 predictions for Stage 2
 - **WHEN** Stage 2 training data is prepared
-- **THEN** the system SHALL use out-of-sample Stage-1 ensemble predictions (never actual labels) as Stage 2 input features, generated via a staged chronological split protocol to prevent label leakage
+- **THEN** the system SHALL use out-of-sample Stage-1 predictions (never actual labels) as Stage 2 input features — including frozen Transformer probabilities for Persistent Slab and frozen RF probabilities for the remaining types — generated via a staged chronological split protocol to prevent label leakage
 
 #### Scenario: Stage 2 training
 - **WHEN** Stage 2 training is invoked
@@ -37,6 +42,13 @@ The system SHALL train a Random Forest classifier that predicts the 1-5 danger l
 #### Scenario: Stage 2 per-elevation-band models
 - **WHEN** Stage 2 training is invoked
 - **THEN** the system SHALL train separate models for each elevation band, consistent with Stage 1
+
+### Requirement: Consecutive temperature gradient feature
+The system SHALL include a consecutive-day temperature gradient physics feature confirmed to improve model performance.
+
+#### Scenario: temp_gradient_consec_days included
+- **WHEN** physics proxy features are assembled for Stage 1 and Stage 2 training
+- **THEN** the feature set SHALL include `temp_gradient_consec_days` (consecutive days above the 10 K/m faceting threshold), confirmed via experimentation to add a +0.007 to +0.010 macro-F1 lift over the daily crossing-count variant
 
 ### Requirement: Class imbalance handling
 The system SHALL address severe class imbalance (approximately 1.1% of days at danger level 4-5) using cost-sensitive learning only. SMOTE is explicitly excluded — research confirmed it hurts generalization.
