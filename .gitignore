@@ -1,0 +1,31 @@
+# Data
+data/raw/
+data/processed/
+*.parquet
+*.grib2
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# ML artifacts
+mlflow/mlruns/
+*.pkl
+*.joblib
+*.pt
+*.pth
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Environment
+.env
