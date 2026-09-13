@@ -17,8 +17,8 @@ from avalanche_ml.models.evaluation import (
 from avalanche_ml.models.rf_stage2 import TwoStageRFPipeline
 from avalanche_ml.models.tracking import configure_tracking, flatten_metrics, log_training_run
 
-TRAIN_END = datetime.date(2023, 6, 30)
-VAL_END = datetime.date(2024, 6, 30)
+TRAIN_END = datetime.date(2024, 6, 30)
+VAL_END = datetime.date(2025, 1, 31)
 
 
 def temporal_split_dataframe(

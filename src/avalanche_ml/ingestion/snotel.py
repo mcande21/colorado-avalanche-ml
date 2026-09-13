@@ -14,6 +14,15 @@ AWDB_BASE = "https://wcc.sc.egov.usda.gov/awdbRestApi/services/v1"
 MAX_RETRIES = 3
 BACKOFF_BASE = 1.0
 DEFAULT_RATE_LIMIT_WAIT = 60
+DAILY_ELEMENTS = "WTEQ,SNWD,PRCP,TMIN,TMAX,TAVG"
+ELEMENT_MAP = {
+    "WTEQ": "swe",
+    "SNWD": "snowDepth",
+    "PRCP": "precipIncrement",
+    "TMIN": "airTempMin",
+    "TMAX": "airTempMax",
+    "TAVG": "airTempAvg",
+}
 
 
 class SnotelClient:
@@ -53,6 +62,8 @@ class SnotelClient:
         now = datetime.datetime.now(tz=datetime.UTC)
         count = 0
         for station in data:
+            if station.get("stateCode") != "CO" or station.get("networkCode") != "SNTL":
+                continue
             self._db.execute("""
                 INSERT INTO stations (station_id, name, latitude, longitude, elevation, huc,
                                       state_code, county, active, catalog_updated_at)
@@ -87,7 +98,7 @@ class SnotelClient:
         end_date: datetime.date,
         resolution: str = "daily",
     ) -> int:
-        params = {
+        params: dict[str, str] = {
             "stationTriplets": station_id,
             "beginDate": start_date.isoformat(),
             "endDate": end_date.isoformat(),
@@ -96,29 +107,61 @@ class SnotelClient:
             params["duration"] = "HOURLY"
         else:
             params["duration"] = "DAILY"
+            params["elements"] = DAILY_ELEMENTS
 
         data = await self._request(f"{AWDB_BASE}/data", params=params)
         if not data:
             return 0
 
+        if resolution == "daily":
+            return self._ingest_daily_from_api(station_id, data, end_date)
+        return self._ingest_hourly_from_api(station_id, data, end_date)
+
+    def _pivot_elements(self, data: list[dict]) -> dict[str, dict]:
+        by_date: dict[str, dict] = {}
+        for station_block in data:
+            for element_block in station_block.get("data", []):
+                code = element_block["stationElement"]["elementCode"]
+                field = ELEMENT_MAP.get(code, code)
+                for v in element_block.get("values", []):
+                    d = v["date"]
+                    if d not in by_date:
+                        by_date[d] = {"date": d}
+                    by_date[d][field] = v.get("value")
+        return by_date
+
+    def _ingest_daily_from_api(
+        self, station_id: str, data: list[dict], end_date: datetime.date,
+    ) -> int:
+        by_date = self._pivot_elements(data)
         count = 0
         prev_values: dict[str, float | None] = {}
-
-        for record in data:
-            values = record.get("values", [])
-            for val in values:
-                if resolution == "hourly":
-                    count += self._insert_hourly(station_id, val, prev_values)
-                else:
-                    count += self._insert_daily(station_id, val, prev_values)
-                prev_values = {
-                    "swe": val.get("swe"),
-                    "snowDepth": val.get("snowDepth"),
-                }
-
+        for d in sorted(by_date.keys()):
+            val = by_date[d]
+            count += self._insert_daily(station_id, val, prev_values)
+            prev_values = {
+                "swe": val.get("swe"),
+                "snowDepth": val.get("snowDepth"),
+            }
         if count > 0:
-            self._update_watermark(station_id, resolution, end_date)
+            self._update_watermark(station_id, "daily", end_date)
+        return count
 
+    def _ingest_hourly_from_api(
+        self, station_id: str, data: list[dict], end_date: datetime.date,
+    ) -> int:
+        count = 0
+        prev_values: dict[str, float | None] = {}
+        for station_block in data:
+            for element_block in station_block.get("data", []):
+                for val in element_block.get("values", []):
+                    count += self._insert_hourly(station_id, val, prev_values)
+                    prev_values = {
+                        "swe": val.get("swe"),
+                        "snowDepth": val.get("snowDepth"),
+                    }
+        if count > 0:
+            self._update_watermark(station_id, "hourly", end_date)
         return count
 
     def _validate_daily(

@@ -12,11 +12,17 @@ import httpx
 logger = logging.getLogger(__name__)
 
 CAIC_API_BASE = "https://avalanche.state.co.us/api-proxy/avid"
+AVORG_API_BASE = "https://api.avalanche.org/v2/public"
 OAP_BASE = "https://raw.githubusercontent.com/openavproject/data"
 CAIC_FEATURE_SERVER = (
     "https://services5.arcgis.com/CAIC/ArcGIS/rest/services"
     "/CAIC_Zones/FeatureServer/0/query"
 )
+AVORG_BAND_MAP = {
+    "upper": "above_treeline",
+    "middle": "near_treeline",
+    "lower": "below_treeline",
+}
 
 ELEVATION_BANDS = ("above_treeline", "near_treeline", "below_treeline")
 
@@ -166,16 +172,79 @@ class CaicClient:
         ]
         return self._store_problem_types(data, source="oap")
 
+    async def ingest_avorg_danger_ratings(
+        self,
+        start_date: datetime.date,
+        end_date: datetime.date,
+    ) -> int:
+        count = 0
+        chunk_start = start_date
+        while chunk_start < end_date:
+            chunk_end = min(chunk_start + datetime.timedelta(days=30), end_date)
+            try:
+                response = await self._request(
+                    f"{AVORG_API_BASE}/products",
+                    params={
+                        "type": "forecast",
+                        "center_id": "CAIC",
+                        "date_start": chunk_start.isoformat(),
+                        "date_end": chunk_end.isoformat(),
+                    },
+                )
+                data = response.json()
+            except Exception as exc:
+                logger.warning("Chunk %s to %s failed: %s", chunk_start, chunk_end, exc)
+                chunk_start = chunk_end + datetime.timedelta(days=1)
+                continue
+            caic_items = [
+                d for d in data
+                if d.get("avalanche_center", {}).get("name", "").startswith("Colorado")
+            ]
+            now = datetime.datetime.now(tz=datetime.UTC)
+            for item in caic_items:
+                zones = item.get("forecast_zone", [])
+                zone_names = list({z["name"] for z in zones})
+                if not zone_names:
+                    continue
+                zone_id = zone_names[0]
+                forecast_date = item["start_date"][:10]
+                for danger in item.get("danger", []):
+                    if danger.get("valid_day") != "current":
+                        continue
+                    for api_key, band in AVORG_BAND_MAP.items():
+                        level = danger.get(api_key)
+                        if level is None:
+                            continue
+                        self._db.execute("""
+                            INSERT INTO danger_ratings
+                                (zone_id, date, elevation_band, danger_level, source, ingested_at)
+                            VALUES (?, ?, ?, ?, 'avorg', ?)
+                            ON CONFLICT (zone_id, date, elevation_band, source) DO UPDATE SET
+                                danger_level = EXCLUDED.danger_level,
+                                ingested_at = EXCLUDED.ingested_at
+                        """, [zone_id, forecast_date, band, int(level), now])
+                        count += 1
+            logger.info(
+                "Chunk %s to %s: %d items, %d total ratings so far",
+                chunk_start, chunk_end, len(caic_items), count,
+            )
+            chunk_start = chunk_end + datetime.timedelta(days=1)
+        return count
+
     async def ingest_danger_ratings_with_fallback(
         self,
         start_date: datetime.date,
         end_date: datetime.date,
     ) -> int:
         try:
-            return await self.ingest_danger_ratings(start_date, end_date)
-        except httpx.HTTPStatusError:
-            logger.warning("CAIC unavailable, falling back to OAP")
-            return await self.ingest_oap_danger_ratings()
+            return await self.ingest_avorg_danger_ratings(start_date, end_date)
+        except (httpx.HTTPStatusError, httpx.ConnectError) as exc:
+            logger.warning("avalanche.org unavailable (%s), trying CAIC direct", exc)
+            try:
+                return await self.ingest_danger_ratings(start_date, end_date)
+            except httpx.HTTPStatusError:
+                logger.warning("CAIC unavailable, falling back to OAP")
+                return await self.ingest_oap_danger_ratings()
 
     async def update_zone_station_mapping(self) -> int:
         response = await self._request(

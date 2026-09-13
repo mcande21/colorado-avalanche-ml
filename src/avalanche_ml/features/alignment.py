@@ -11,10 +11,10 @@ from avalanche_ml.features.weather import get_feature_columns
 ELEVATION_BANDS = ("above_treeline", "near_treeline", "below_treeline")
 PROBLEM_TYPE_FLAGS = ["persistent_slab", "storm_slab", "loose_wet"]
 
-TRAIN_END = datetime.date(2023, 6, 30)
-VAL_START = datetime.date(2023, 7, 1)
-VAL_END = datetime.date(2024, 6, 30)
-TEST_START = datetime.date(2024, 7, 1)
+TRAIN_END = datetime.date(2024, 6, 30)
+VAL_START = datetime.date(2024, 10, 1)
+VAL_END = datetime.date(2025, 1, 31)
+TEST_START = datetime.date(2025, 2, 1)
 
 
 def create_training_matrix_table(conn: duckdb.DuckDBPyConnection) -> None:
