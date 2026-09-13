@@ -54,8 +54,9 @@ def compute_normalization_stats(
     feature_cols = get_sequence_feature_columns()
     agg_parts = []
     for col in feature_cols:
-        agg_parts.append(f"AVG({col})")
-        agg_parts.append(f"STDDEV_POP({col})")
+        safe = f"CASE WHEN isnan({col}) THEN NULL ELSE {col} END"
+        agg_parts.append(f"AVG({safe})")
+        agg_parts.append(f"STDDEV_POP({safe})")
     agg_sql = ", ".join(agg_parts)
     row = conn.execute(
         f"SELECT {agg_sql} FROM training_matrix WHERE date <= ?", [end_date],
