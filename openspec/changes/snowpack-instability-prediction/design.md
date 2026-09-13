@@ -120,7 +120,7 @@ See [proposal.md](proposal.md) for motivation. This design addresses a greenfiel
 
 ### D7: Temporal splits only, no random cross-validation
 
-**Choice:** Strictly temporal train/val/test splits: training through 2023-06-30, validation 2023-24 season, test 2024-25 season.
+**Choice:** Strictly temporal train/val/test splits: training Dec 2013 through Jun 2022, validation 2022-24 seasons, test 2024-25 season.
 
 **Rationale:** Weather time series have strong temporal autocorrelation. Random splitting leaks future information into training. Published avalanche ML papers that use random splits report inflated metrics. Temporal splits simulate the real deployment scenario: predict today's danger from past data only.
 
@@ -143,6 +143,56 @@ See [proposal.md](proposal.md) for motivation. This design addresses a greenfiel
 **Choice:** TPI-based detection (TPI@500m < -50m) triggers a correction factor for nighttime temperature under calm/clear conditions.
 
 **Rationale:** Valley locations in Colorado routinely see 10-20°C inversions that HRRR misses at 3km resolution. Without correction, downscaled temperatures in valleys are systematically too warm, affecting temperature gradient features and wet-avalanche prediction. The correction is conditioned on measurable terrain + weather state (low TPI + low wind + clear sky), not a blanket offset.
+
+## Expanded Data Strategy (Research Update)
+
+Based on research findings (Schwartzreich & Rodriguez 2026, OAP dataset analysis, avalanche.org API exploration), the data pipeline and model architecture have been significantly expanded.
+
+### Three-Source Data Pipeline
+
+| Source | Coverage | Records | Problem Types | Notes |
+|--------|----------|---------|---------------|-------|
+| **OAP CSV** | Dec 2013 - Apr 2021 | ~11,675 CO rows, 10 zones | 8 types with likelihood/size/octagon | Primary pre-2021 source |
+| **avalanche.org v2 API** | Nov 2019 - present | Per-product detail | 9 canonical types via product/{id} | Extended back from Nov 2022 |
+| **Kaggle (Schwartzreich)** | Dec 2013 - Apr 2022 | 28,140 region-band-days, 8 zones | Danger ratings + GHCN weather | Supplementary cross-validation |
+
+**Continuous coverage:** OAP (Dec 2013 - Apr 2021) + API (Nov 2019 - present) = 12 seasons with no gaps. The Nov 2019 - Apr 2021 overlap enables cross-validation between sources.
+
+### Zone Boundary GeoJSON
+
+OAP provides `Data/USAvalancheRegions.geojson` with zone polygons. This replaces the haversine approximation for zone-station mapping with exact polygon containment testing, producing more accurate mappings in zones with irregular boundaries.
+
+### Updated Temporal Split
+
+With 12 seasons of data (expanded from ~8):
+- **Train:** Dec 2013 - Jun 2022 (~9 seasons)
+- **Validation:** Oct 2022 - Jun 2024 (2 seasons)
+- **Test:** Oct 2024 - Jun 2025 (1 season)
+
+### Per-Band Model Architecture (12 Models)
+
+Per Schwartzreich 2026, the system now trains per-elevation-band models:
+- **Stage 1:** 9 models (3 problem types x 3 elevation bands) — binary classifiers for Persistent Slab, Slab Problem (storm+wind merged), Loose Wet
+- **Stage 2:** 3 models (1 per elevation band) — danger level 1-5 using frozen Stage-1 predictions
+- **Total:** 12 models per architecture (RF and LSTM/Transformer)
+
+Stage 2 uses out-of-sample Stage-1 ensemble predictions (never actual labels) via staged chronological split protocol.
+
+### Key Architecture Changes from Research
+
+- **SMOTE dropped:** Cost-sensitive class weights only ({0:1, 1:5} baseline). Research confirmed SMOTE hurts generalization.
+- **Soft-voting ensemble:** Top-3 RF configs by macro-F1 combined via averaged probability distributions.
+- **Threshold at serving time:** Deploy with predict_proba, threshold adjustable per context. Default t=0.30 for safety.
+- **Transformer for Persistent Slab:** Schwartzreich found Transformer (64-unit, 2-layer) beat RF, LSTM, GRU for persistent slab prediction. Added as Stage-1 option.
+- **Duration accumulation:** Physics proxy temp_gradient_days weighted by consecutive days above 10 K/m threshold (Colorado continental snowpack signal).
+
+### Benchmark Targets (Schwartzreich 2026)
+
+| Band | Macro-F1 |
+|------|----------|
+| Below Treeline (BTL) | 0.544 |
+| Near Treeline (NTL) | 0.525 |
+| Above Treeline (ATL) | 0.508 |
 
 ## Component Design
 
@@ -184,10 +234,11 @@ Temporal alignment: CAIC labels join to station-dates through `zone_station_map`
 **Training:**
 
 1. Query `features_matrix` joined with `caic_danger` for the training date range
-2. Apply temporal split (train: ≤ 2023-06-30, val: 2023-24 season, test: 2024-25 season)
-3. Stage 1: fit multi-label RF on weather+physics → problem types (3 models, one per elevation band)
-4. Generate Stage 1 predictions on training data (out-of-fold to avoid leakage)
-5. Stage 2: fit RF on weather+physics+Stage1_probs → danger level (3 models per elevation band)
+2. Apply temporal split (train: Dec 2013 - Jun 2022, val: 2022-24 seasons, test: 2024-25 season)
+3. Stage 1: fit binary RF classifiers on weather+physics → 3 problem types per band (9 models) with cost-sensitive weights
+4. Generate frozen Stage 1 predictions on training data (staged chronological split, out-of-sample only)
+5. Stage 2: fit RF on weather+physics+frozen_Stage1_probs → danger level (3 models, 1 per band; 12 total)
+6. Build soft-voting ensemble from top-3 configs by macro-F1
 6. Evaluate on test set: macro F1, per-class F1, ordinal accuracy (±1), ROC-AUC, confusion matrix
 7. Log everything to MLflow: params, metrics, model artifact, SHAP summary plot
 
@@ -287,6 +338,18 @@ Delivers: Dockerized FastAPI service with all endpoints, daily scheduler, auth, 
 
 Dependencies: Phase 1B (needs at least the RF model to serve). Phase 1C optional — ensemble activates if LSTM is available.
 
+### Phase 1E: Data Expansion (Research-driven)
+
+Delivers: Three-source data pipeline (OAP + API + Kaggle) with continuous 12-season coverage. GeoJSON zone boundaries replacing haversine mapping. Cross-validated labels in the overlap period.
+
+Dependencies: Phase 1A (extends existing ingestion infrastructure).
+
+### Phase 1F: Architecture Upgrade (Research-driven)
+
+Delivers: Per-elevation-band 12-model architecture, frozen Stage-1 predictions, soft-voting ensemble, Transformer Persistent Slab option, duration-weighted physics features. Evaluated against Schwartzreich 2026 benchmark.
+
+Dependencies: Phase 1E (needs expanded dataset) + Phase 1B (refactors existing RF architecture).
+
 ### Phase 2: Spatial Downscaling (Micro-weather)
 
 Capabilities: `data/hrrr-ingestion`, `spatial/downscaling`
@@ -303,11 +366,11 @@ Dependencies: Phase 1D + Phase 2.
 
 ## Risks / Trade-offs
 
-**[CAIC scraper fragility]** → caic-python depends on HTML structure that CAIC can change without notice. → *Mitigation:* OAP fallback covers 2015-2021. For dates after 2021, a scraper break halts new label ingestion. The ingestion layer isolates this failure — features still compute, predictions still serve from the last available model. Monitor via /health endpoint data_freshness_hours.
+**[CAIC scraper fragility]** → caic-python depends on HTML structure that CAIC can change without notice. → *Mitigation:* Three-source strategy eliminates single-source dependency: OAP covers Dec 2013 - Apr 2021, avalanche.org API covers Nov 2019 - present, Kaggle provides supplementary cross-validation. For dates after Apr 2021, the API is the primary source (not scraping). The ingestion layer isolates any source failure — features still compute, predictions still serve from the last available model.
 
 **[HRRR precipitation bias (25-65%)]** → Raw HRRR precip values produce wrong snow loading estimates. → *Mitigation:* Station-based rolling 30-day correction factor applied at ingestion time. The correction is only as good as station coverage — remote areas with no nearby SNOTEL station get IDW-averaged corrections that may still be wrong. Phase 2 spatial downscaling partially addresses this.
 
-**[Class imbalance (1.1% high-danger)]** → Models will default to predicting "Low" without intervention. → *Mitigation:* Three-pronged approach — SMOTE oversampling on training set, cost-sensitive class weights, per-class threshold tuning on validation set. Focal loss for LSTM. Binary/3-class grouping as primary output reduces the impact. Evaluate with per-class F1, not just accuracy.
+**[Class imbalance (1.1% high-danger)]** → Models will default to predicting "Low" without intervention. → *Mitigation:* Cost-sensitive class weights ({0:1, 1:5} baseline) and serving-time threshold tuning (default t=0.30). SMOTE dropped per research findings — hurts generalization. Focal loss for LSTM. Binary/3-class grouping as primary output reduces the impact. Evaluate with per-class F1, not just accuracy.
 
 **[Temporal autocorrelation causing metric inflation]** → Adjacent days have similar weather and similar labels. → *Mitigation:* Strictly temporal splits. No random cross-validation. Season-boundary gaps between splits (summer months excluded). This reduces effective training data but produces honest metrics.
 

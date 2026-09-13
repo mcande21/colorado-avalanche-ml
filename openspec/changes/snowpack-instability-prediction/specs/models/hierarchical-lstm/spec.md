@@ -57,12 +57,23 @@ The system SHALL handle the input feature requirements for each temporal branch.
 - **WHEN** input sequences contain missing values
 - **THEN** the system SHALL apply a binary mask indicating valid observations, and the LSTM SHALL use masked attention or zero-filling with the mask concatenated as an additional input feature
 
+### Requirement: Transformer option for Persistent Slab
+The system SHALL support a Transformer architecture as an alternative Stage-1 head for the Persistent Slab problem type, based on research showing Transformer superiority for this specific prediction target.
+
+#### Scenario: Transformer Persistent Slab head
+- **WHEN** the persistent slab Stage-1 model is configured
+- **THEN** the system SHALL support a Transformer head option (64-unit, 2-layer) as an alternative to LSTM, selected by validation performance comparison
+
+#### Scenario: Transformer benchmark
+- **WHEN** the Transformer head is evaluated
+- **THEN** the system SHALL compare against LSTM and RF for the Persistent Slab Stage-1 model specifically, reporting macro-F1 per elevation band, as Schwartzreich 2026 found Transformer outperformed RF, LSTM, and GRU for this problem type
+
 ### Requirement: Per-elevation-band prediction
-The system SHALL produce separate predictions per elevation band.
+The system SHALL produce separate predictions per elevation band using the same 12-model structure as the RF.
 
 #### Scenario: Elevation band handling
 - **WHEN** the model is configured
-- **THEN** the system SHALL train either (a) separate models per elevation band, or (b) a single model with elevation band as a categorical input embedding — the choice SHALL be determined by validation performance comparison during hyperparameter search
+- **THEN** the system SHALL train 9 Stage-1 models (3 problem types x 3 elevation bands) + 3 Stage-2 models (1 per band) = 12 total, matching the RF architecture structure
 
 ### Requirement: Class imbalance handling
 The system SHALL address class imbalance in the deep learning context.

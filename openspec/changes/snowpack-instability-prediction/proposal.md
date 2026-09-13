@@ -5,7 +5,7 @@ Colorado avalanche forecasting relies on expert judgment applied to sparse weath
 ## What Changes
 
 - Ingest SNOTEL station data (118 CO stations) via AWDB REST API into a DuckDB feature store
-- Ingest CAIC danger ratings via caic-python with Open Avalanche Project fallback labels
+- Ingest CAIC danger ratings and problem types via three-source pipeline: OAP CSV (Dec 2013 - Apr 2021), avalanche.org v2 API (Nov 2019 - present), Kaggle supplementary (Dec 2013 - Apr 2022) for continuous 12-season coverage
 - Engineer 67-88 features: weather rolling windows (24h-120h), physics proxies (temp gradient days, surface hoar index, wind slab loading, rain-on-snow, snow depth anomaly)
 - Train two-stage Random Forest baseline (predict problem types -> predict danger level) with SHAP explanations
 - Train hierarchical multi-rate LSTM (180-day lookback, N-HiTS-style multi-rate MaxPool) and benchmark against RF
@@ -41,4 +41,4 @@ _None — greenfield project, no existing specs._
 - **Dependencies**: Python 3.11+, scikit-learn, PyTorch, FastAPI, DuckDB, MLflow, Herbie, snotelpy, caic-python, SHAP, Polars/Pandas
 - **Data storage**: DuckDB feature store (local), MLflow tracking store
 - **Deployment**: Docker container, daily cron ingestion
-- **Key risks**: CAIC data access (scraping, no official API — fallback to OAP labels); HRRR 25-65% precipitation bias (mandatory correction); severe class imbalance (1.1% avalanche days — SMOTE/cost-sensitive required); DL hasn't outperformed RF in published avalanche studies (RF baseline first)
+- **Key risks**: CAIC data access (mitigated by three-source pipeline: OAP + API + Kaggle); HRRR 25-65% precipitation bias (mandatory correction); severe class imbalance (1.1% avalanche days — cost-sensitive weights, no SMOTE per research); DL hasn't outperformed RF in published avalanche studies (RF baseline first, Transformer tested for Persistent Slab)

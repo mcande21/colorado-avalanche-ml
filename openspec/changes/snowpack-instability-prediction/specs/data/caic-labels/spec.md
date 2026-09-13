@@ -26,23 +26,76 @@ The system SHALL ingest avalanche problem type classifications from CAIC forecas
 - **WHEN** problem types are ingested
 - **THEN** the system SHALL normalize them to the standard set: Persistent Slab, Storm Slab, Loose Wet, Loose Dry, Wind Slab, Wet Slab, Deep Slab, Cornice Fall, Glide
 
-### Requirement: Open Avalanche Project fallback
-The system SHALL support ingestion from the Open Avalanche Project labeled dataset (2015-2021) as a fallback and historical supplement.
+### Requirement: Open Avalanche Project CSV ingestion (primary pre-2021)
+The system SHALL ingest the Open Avalanche Project CSV dataset as the primary label source for Dec 2013 through Apr 2021.
 
-#### Scenario: Historical backfill from OAP
-- **WHEN** CAIC data is unavailable for dates within the OAP coverage period (2015-2021)
-- **THEN** the system SHALL ingest OAP labels, mapping them to the same schema as CAIC labels, and tag records with source='oap'
+#### Scenario: OAP CSV download and filtering
+- **WHEN** OAP ingestion is invoked
+- **THEN** the system SHALL download from `https://github.com/scottcha/OpenAvalancheProject/raw/master/Data/CleanedForecastsNWAC_CAIC_UAC_CAC.V1.2013-2021.zip`, filter to the ~11,675 Colorado rows across 10 zones (Dec 2013 - Apr 2021), and tag records with source='oap'
+
+#### Scenario: OAP problem type ingestion
+- **WHEN** OAP data is parsed
+- **THEN** the system SHALL extract all 8 problem types (LooseDry, LooseWet, StormSlabs, WindSlab, PersistentSlab, DeepPersistentSlab, WetSlabs, Cornices, Glide) with their likelihood, size, and aspect-elevation octagon per type, mapping to the standard vocabulary
+
+#### Scenario: OAP danger rating extraction
+- **WHEN** OAP data is parsed
+- **THEN** the system SHALL extract Day1 danger ratings per elevation band (above/near/below treeline) and store them in caic_danger with source='oap'
+
+### Requirement: avalanche.org v2 API extended ingestion (Nov 2019 - present)
+The system SHALL ingest avalanche forecast data from the avalanche.org v2 API, extending back to Nov 2019.
+
+#### Scenario: Product listing retrieval
+- **WHEN** API ingestion is invoked for a date range
+- **THEN** the system SHALL query `GET products?avalanche_center_id=CAIC&date_start=&date_end=` to retrieve forecast product listings, paginating as needed
+
+#### Scenario: Product detail with problem types
+- **WHEN** a product listing is retrieved
+- **THEN** the system SHALL fetch `GET product/{id}` for each product to extract the `forecast_avalanche_problems` array, capturing problem type name, likelihood, location (aspect+elevation), and size
+
+#### Scenario: Problem type vocabulary from API
+- **WHEN** problem types are ingested from the API
+- **THEN** the system SHALL reference the 9 canonical problem types from `GET avalanche-problems` and normalize to the standard vocabulary
+
+#### Scenario: API coverage window
+- **WHEN** API ingestion date range is configured
+- **THEN** the system SHALL support ingestion back to Nov 2019 (confirmed API availability), not just Nov 2022 as originally scoped
+
+### Requirement: Kaggle supplementary dataset
+The system SHALL support ingestion from the Schwartzreich Kaggle dataset as a supplementary and cross-validation source.
+
+#### Scenario: Kaggle dataset ingestion
+- **WHEN** supplementary data ingestion is invoked
+- **THEN** the system SHALL ingest from `https://www.kaggle.com/datasets/justinschwartzreich/colorado-avalanche-danger-and-weather-2013-2022`, containing 28,140 region-band-days (Dec 2013 - Apr 2022) across 8 CAIC zones with GHCN weather features, and tag records with source='kaggle'
+
+### Requirement: Three-source coverage strategy
+The system SHALL assemble continuous label coverage across 12 seasons using three complementary sources.
+
+#### Scenario: Coverage assembly
+- **WHEN** training data is assembled
+- **THEN** the system SHALL combine OAP (Dec 2013 - Apr 2021) + avalanche.org API (Nov 2019 - present) for continuous 12-season coverage, with Kaggle as supplementary validation
+
+#### Scenario: Overlap cross-validation
+- **WHEN** data from OAP and API overlap (Nov 2019 - Apr 2021)
+- **THEN** the system SHALL cross-validate danger ratings and problem types between sources, flagging and logging discrepancies exceeding 10% mismatch rate per zone
 
 #### Scenario: Source provenance tracking
 - **WHEN** labels are stored from any source
-- **THEN** each record SHALL include a source column ('caic' or 'oap') and an ingested_at timestamp
+- **THEN** each record SHALL include a source column ('caic', 'oap', 'api', or 'kaggle') and an ingested_at timestamp
+
+#### Scenario: Source priority
+- **WHEN** multiple sources provide labels for the same zone-date-band
+- **THEN** the system SHALL prefer API over OAP over Kaggle, with the selected source recorded in the source column
 
 ### Requirement: Zone-to-station mapping
 The system SHALL maintain a mapping between CAIC forecast zones and nearby SNOTEL stations to enable label-feature alignment.
 
 #### Scenario: Zone mapping initialization
 - **WHEN** zone-station mapping is initialized
-- **THEN** the system SHALL associate each CAIC zone with SNOTEL stations within or proximal to the zone boundary, using the CAIC ArcGIS FeatureServer for zone geometries and station coordinates for spatial matching
+- **THEN** the system SHALL associate each CAIC zone with SNOTEL stations using the OAP zone boundary GeoJSON (`Data/USAvalancheRegions.geojson` from the OpenAvalancheProject repo) for polygon containment testing, with CAIC ArcGIS FeatureServer as fallback
+
+#### Scenario: GeoJSON polygon containment
+- **WHEN** zone-station spatial matching is performed
+- **THEN** the system SHALL use GeoJSON polygon containment (point-in-polygon) rather than haversine distance approximation, producing more accurate mappings in zones with irregular boundaries
 
 #### Scenario: Station within multiple zones
 - **WHEN** a SNOTEL station falls within the boundary of multiple CAIC zones

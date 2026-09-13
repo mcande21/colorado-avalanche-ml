@@ -11,9 +11,9 @@ The system SHALL compute a cumulative temperature gradient proxy indicating face
 - **WHEN** features are computed for a station and date
 - **THEN** the system SHALL compute daily temperature gradient as (air_temp_range_f / snow_depth_inches), converted to K/m, and flag days where the gradient exceeds 10 K/m as "faceting days"
 
-#### Scenario: Cumulative gradient days
+#### Scenario: Cumulative gradient days with duration weighting
 - **WHEN** temperature gradient is computed
-- **THEN** the system SHALL produce a cumulative count of faceting days since the last reset event (rain-on-snow or melt-freeze cycle that exceeds a threshold) as the feature temp_gradient_days
+- **THEN** the system SHALL produce temp_gradient_days weighted by consecutive days above threshold, not just a daily crossing count — Colorado continental snowpack exceeds 10 K/m gradient for weeks at a time, so cumulative duration (consecutive days above threshold) is the Colorado-specific signal. The counter resets on the last reset event (rain-on-snow or melt-freeze cycle that exceeds a threshold)
 
 #### Scenario: Zero snow depth handling
 - **WHEN** snow depth is zero or NULL
