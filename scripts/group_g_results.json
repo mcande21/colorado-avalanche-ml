@@ -1,0 +1,62 @@
+{
+  "above_treeline_without_consec": {
+    "band": "above_treeline",
+    "config": "without_consec",
+    "val_macro_f1": 0.6799,
+    "test_macro_f1": 0.655,
+    "val_binary_f1": 0.5462,
+    "val_fnr": 0.2932,
+    "consec_rank": null,
+    "consec_importance": null
+  },
+  "above_treeline_with_consec": {
+    "band": "above_treeline",
+    "config": "with_consec",
+    "val_macro_f1": 0.6864,
+    "test_macro_f1": 0.6561,
+    "val_binary_f1": 0.5532,
+    "val_fnr": 0.2928,
+    "consec_rank": 26,
+    "consec_importance": 0.012334
+  },
+  "near_treeline_without_consec": {
+    "band": "near_treeline",
+    "config": "without_consec",
+    "val_macro_f1": 0.6807,
+    "test_macro_f1": 0.6485,
+    "val_binary_f1": 0.537,
+    "val_fnr": 0.3217,
+    "consec_rank": null,
+    "consec_importance": null
+  },
+  "near_treeline_with_consec": {
+    "band": "near_treeline",
+    "config": "with_consec",
+    "val_macro_f1": 0.6886,
+    "test_macro_f1": 0.6499,
+    "val_binary_f1": 0.546,
+    "val_fnr": 0.3201,
+    "consec_rank": 23,
+    "consec_importance": 0.013543
+  },
+  "below_treeline_without_consec": {
+    "band": "below_treeline",
+    "config": "without_consec",
+    "val_macro_f1": 0.6847,
+    "test_macro_f1": 0.5857,
+    "val_binary_f1": 0.4882,
+    "val_fnr": 0.2967,
+    "consec_rank": null,
+    "consec_importance": null
+  },
+  "below_treeline_with_consec": {
+    "band": "below_treeline",
+    "config": "with_consec",
+    "val_macro_f1": 0.6945,
+    "test_macro_f1": 0.5899,
+    "val_binary_f1": 0.5009,
+    "val_fnr": 0.2993,
+    "consec_rank": 16,
+    "consec_importance": 0.018341
+  }
+}
