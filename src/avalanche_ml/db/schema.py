@@ -46,6 +46,43 @@ def create_tables(conn: duckdb.DuckDBPyConnection) -> None:
     """)
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS danger_ratings (
+            zone_id VARCHAR NOT NULL,
+            date DATE NOT NULL,
+            elevation_band VARCHAR NOT NULL,
+            danger_level INTEGER,
+            source VARCHAR NOT NULL DEFAULT 'caic',
+            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (zone_id, date, elevation_band, source)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS problem_types (
+            zone_id VARCHAR NOT NULL,
+            date DATE NOT NULL,
+            problem_type VARCHAR NOT NULL,
+            likelihood VARCHAR,
+            size_min DOUBLE,
+            size_max DOUBLE,
+            aspects VARCHAR,
+            elevation_bands VARCHAR,
+            ordering INTEGER,
+            source VARCHAR NOT NULL DEFAULT 'caic',
+            ingested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (zone_id, date, problem_type, source)
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS zone_station_mapping (
+            zone_id VARCHAR NOT NULL,
+            station_id VARCHAR NOT NULL,
+            PRIMARY KEY (zone_id, station_id)
+        )
+    """)
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS ingestion_watermarks (
             source VARCHAR NOT NULL,
             entity_id VARCHAR NOT NULL,
