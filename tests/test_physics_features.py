@@ -482,8 +482,8 @@ class TestIntegration:
         assert count_after == count_before
 
     def test_feature_count(self):
-        """Spec requires exactly 8 physics proxy features."""
-        assert len(PHYSICS_FEATURES) == 8
+        """9 physics proxy features (8 original + consecutive gradient days)."""
+        assert len(PHYSICS_FEATURES) == 9
 
     def test_filtered_computation(self, physics_db):
         """Can compute features for specific station and date range."""

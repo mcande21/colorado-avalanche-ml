@@ -7,6 +7,7 @@ import duckdb
 
 PHYSICS_FEATURES = [
     "temp_gradient_days",
+    "temp_gradient_consec_days",
     "surface_hoar_index",
     "wind_slab_loading",
     "rain_on_snow_hours",
@@ -133,6 +134,8 @@ def compute_physics_features(
     results = []
     for station_id, data in station_data.items():
         tgd_count = 0
+        tgd_consec = 0
+        tgd_consec_max = 0
         shi_count = 0
         last_season_start: datetime.date | None = None
 
@@ -151,6 +154,8 @@ def compute_physics_features(
             if last_season_start is None or current_season != last_season_start:
                 if last_season_start is not None:
                     tgd_count = 0
+                    tgd_consec = 0
+                    tgd_consec_max = 0
                     shi_count = 0
                 last_season_start = current_season
 
@@ -164,10 +169,15 @@ def compute_physics_features(
 
             if is_ros and precip_val > ROS_PRECIP_RESET:
                 tgd_count = 0
+                tgd_consec = 0
 
             gradient = _gradient(temp_range, snow_depth)
             if gradient is not None and gradient > GRADIENT_THRESHOLD:
                 tgd_count += 1
+                tgd_consec += 1
+                tgd_consec_max = max(tgd_consec_max, tgd_consec)
+            else:
+                tgd_consec = 0
 
             if precip_val > BURIAL_PRECIP_THRESHOLD:
                 shi_count = 0
@@ -233,7 +243,8 @@ def compute_physics_features(
 
             results.append((
                 station_id, date_val,
-                float(tgd_count), float(shi_count), float(wind_slab),
+                float(tgd_count), float(tgd_consec_max),
+                float(shi_count), float(wind_slab),
                 float(ros_hours), float(ros_amount), snow_anomaly,
                 float(early_flag), float(ft_count),
             ))
