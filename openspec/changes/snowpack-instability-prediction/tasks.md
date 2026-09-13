@@ -154,6 +154,17 @@
 - [x] 20.7 Retrain and evaluate against Schwartzreich 2026 benchmark (macro-F1: BTL 0.544, NTL 0.525, ATL 0.508); verify by confirming metrics are computed per band and reported alongside benchmark
 - [x] 20.8 Run full experiment battery on expanded 12-season dataset with updated architecture; verify by confirming MLflow logs all runs with metrics, model artifacts, and comparison tables
 
+## 21. Post-Phase 1F Experiments
+
+- [x] 21.1 Fix alignment bug in `_transformer_predict_proba` (rows sorted for batched inference but not unsorted before returning probabilities, misaligning 96.5% of rows); verify by confirming predicted probabilities match input row order
+- [x] 21.2 Implement Stage 2 GRU option for temporal danger classification as an architecture switch alongside RF; verify by confirming both paths train and produce predictions from the same interface
+- [x] 21.3 Run per-class threshold tuning on danger classes 2/3/4; verify by confirming tuned thresholds are evaluated against the untuned baseline (result: no improvement, dead end)
+- [x] 21.4 Run ordinal loss (Frank & Hall) experiment across all elevation bands; verify by confirming macro-F1 is compared against standard classification loss (result: -4.5 to -7.3pp, dead end)
+- [x] 21.5 Run Kaggle baseline diagnostic: train balanced RF on Schwartzreich's exact 8-zone dataset; verify by confirming ATL macro-F1 (0.501) is within reporting distance of the published benchmark (0.508)
+- [x] 21.6 Document zone-granularity root cause analysis (27-zone vs 8-zone samples/zone) for the Schwartzreich benchmark gap; verify by confirming the design doc records the diagnostic and conclusion
+
 ## Status
 
 Phase 1 (sections 1-20, through Phase 1F Architecture Upgrade) is complete and stable with the hybrid Transformer + RF architecture. Phase 2 (Spatial Downscaling, sections 15-18) is deferred to the separate `terrain-weather-ml` project rather than continued here.
+
+Post-Phase 1F experimentation (section 21) is complete: alignment bug fixed, GRU Stage 2 added, threshold tuning and ordinal loss both ruled out, and the Schwartzreich benchmark gap traced to zone granularity rather than model quality. Next direction is physics-informed feature innovation (new snowpack physics proxies, cross-domain signal discovery) rather than further benchmark chasing, with eventual integration of `terrain-weather-ml` micro-weather outputs.

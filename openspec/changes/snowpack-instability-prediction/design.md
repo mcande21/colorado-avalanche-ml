@@ -398,6 +398,24 @@ Dependencies: Phase 1D + Phase 2.
 
 **[SNOTEL station sparsity]** → 118 stations across all of Colorado means some zones have poor coverage. → *Mitigation:* Phase 2 spatial downscaling addresses this for weather features. For training labels, the zone-station mapping explicitly handles multi-station zones and flags zones with insufficient station coverage. Predictions for low-coverage zones include a confidence penalty.
 
+## Experimental Results & Lessons Learned
+
+**[Alignment bug in `_transformer_predict_proba`]** → 96.5% of rows were misaligned — the method sorted rows for batched inference then never restored original order before returning probabilities. → *Fix:* Track original index through the sort and unsort before returning. Committed `6c29b97`.
+
+**[Stage 2 GRU underperforms RF]** → Implemented a GRU option for Stage 2 (temporal danger classification) as a one-parameter architecture switch alongside the existing RF path. With default hyperparameters it underperforms RF. → *Status:* Architecture is clean and swappable; needs hyperparameter tuning to be competitive. Committed `906f962`.
+
+**[Per-class threshold tuning — dead end]** → Tuned per-class decision thresholds to try to improve separation between danger classes 2/3/4. → *Result:* No improvement. The model's predicted probabilities don't separate these classes well enough for threshold adjustment to help; the problem is discriminative power, not calibration.
+
+**[Ordinal loss (Frank & Hall) — dead end]** → Tried an ordinal classification loss to exploit the ordered structure of danger levels. → *Result:* Worse than standard classification across all elevation bands (-4.5 to -7.3pp macro-F1). Ordinal loss boosts High-danger recall but tanks precision enough to net negative overall.
+
+**[Kaggle baseline diagnostic — benchmark match confirmed]** → Ran our balanced RF on Schwartzreich's exact Kaggle dataset (8-zone granularity) to isolate whether the benchmark gap was a model or data issue. → *Result:* Our RF hits ATL 0.501 vs their pipeline's 0.508 — within 0.7pp. On comparable data, we match the published benchmark.
+
+**[Schwartzreich gap explained: zone granularity, not model quality]** → On our own 27-zone data we trail the benchmark by a wider margin (ATL 0.397, -0.111 vs 0.508). The diagnostic above shows this gap is not a modeling deficiency. → *Root cause:* 27 zones means ~350 samples/zone vs ~1200 samples/zone at Schwartzreich's 8-zone granularity — a per-zone data sparsity problem, not an architecture or feature problem. → *Implication:* Stop tuning against this benchmark; further gains require more data per zone or a different problem framing, not model changes.
+
+**[Experiment volume]** → 222+ experiments run across RF, ExtraTrees, XGBoost, Transformer, GRU, threshold tuning, and ordinal loss variants, logged to MLflow.
+
+**Next direction:** Given the benchmark gap is explained and closing it further has diminishing returns, the next phase shifts from benchmark-chasing to physics-informed innovation — new proxy features capturing snowpack processes (temperature gradient metamorphism, surface hoar formation, wind loading) that RF/GRU can't infer from raw weather inputs alone, including cross-domain signals and eventual integration with the `terrain-weather-ml` project for higher-resolution micro-weather inputs.
+
 ## Open Questions
 
 - **OAP label schema mapping completeness.** The Open Avalanche Project dataset format is documented but the exact field mapping to CAIC's current schema has not been validated. This affects only the fallback path and can be resolved during Phase 1A implementation without changing the design.
