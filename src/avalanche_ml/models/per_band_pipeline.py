@@ -15,6 +15,7 @@ from torch import nn
 from avalanche_ml.features.alignment import ELEVATION_BANDS, PROBLEM_TYPE_FLAGS
 from avalanche_ml.features.physics import PHYSICS_FEATURES
 from avalanche_ml.features.weather import get_feature_columns
+from avalanche_ml.models.gru_stage2 import DangerLevelGRU, build_s2_sequences
 from avalanche_ml.models.transformer_model import PersistentSlabTransformer
 
 PROB_COLUMNS = [f"{pt}_prob" for pt in PROBLEM_TYPE_FLAGS]
@@ -45,6 +46,12 @@ TRANSFORMER_EPOCHS = 10
 TRANSFORMER_BATCH_SIZE = 64
 TRANSFORMER_LR = 1e-3
 TRANSFORMER_PATIENCE = 5
+
+GRU_LOOKBACK = 7
+GRU_EPOCHS = 20
+GRU_BATCH_SIZE = 256
+GRU_LR = 1e-3
+GRU_PATIENCE = 5
 
 
 def _get_device() -> torch.device:
@@ -272,6 +279,103 @@ def _transformer_predict_proba(
     return sorted_probs[unsort_positions]
 
 
+def _train_gru_stage2(
+    train_seqs: np.ndarray,
+    train_labels: np.ndarray,
+    val_seqs: np.ndarray,
+    val_labels: np.ndarray,
+    input_size: int,
+    device: torch.device,
+    epochs: int = GRU_EPOCHS,
+    batch_size: int = GRU_BATCH_SIZE,
+    lr: float = GRU_LR,
+    patience: int = GRU_PATIENCE,
+) -> DangerLevelGRU:
+    model = DangerLevelGRU(input_size=input_size).to(device)
+
+    class_counts = np.bincount(train_labels, minlength=5)[1:5].astype(np.float64)
+    class_counts = np.maximum(class_counts, 1.0)
+    weights = (1.0 / class_counts) / (1.0 / class_counts).sum() * len(DANGER_CLASSES)
+    class_weights = torch.tensor(weights, dtype=torch.float32, device=device)
+    criterion = nn.CrossEntropyLoss(weight=class_weights)
+
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+
+    labels_0indexed = train_labels - 1
+    val_labels_0indexed = val_labels - 1 if len(val_labels) > 0 else val_labels
+
+    n_train = len(train_seqs)
+    best_state = None
+    best_val_loss = float("inf")
+    no_improve = 0
+
+    for _ in range(epochs):
+        model.train()
+        perm = np.random.permutation(n_train)
+        for start in range(0, n_train, batch_size):
+            idx = perm[start:start + batch_size]
+            X_b = torch.tensor(train_seqs[idx], dtype=torch.float32, device=device)
+            y_b = torch.tensor(labels_0indexed[idx], dtype=torch.long, device=device)
+            logits = model(X_b)
+            loss = criterion(logits, y_b)
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+        if len(val_seqs) > 0:
+            model.eval()
+            with torch.no_grad():
+                val_losses = []
+                for vs in range(0, len(val_seqs), 4096):
+                    vb = torch.tensor(
+                        val_seqs[vs:vs + 4096], dtype=torch.float32, device=device,
+                    )
+                    vy = torch.tensor(
+                        val_labels_0indexed[vs:vs + 4096], dtype=torch.long, device=device,
+                    )
+                    vl = criterion(model(vb), vy).item()
+                    val_losses.append(vl * len(vb))
+                avg_val_loss = sum(val_losses) / len(val_seqs)
+                if avg_val_loss < best_val_loss:
+                    best_val_loss = avg_val_loss
+                    best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    no_improve = 0
+                else:
+                    no_improve += 1
+                    if no_improve >= patience:
+                        break
+
+    if best_state is not None:
+        model.load_state_dict(best_state)
+    model = model.cpu()
+    model.eval()
+    return model
+
+
+def _gru_stage2_predict(
+    model: DangerLevelGRU,
+    seqs: np.ndarray,
+    device: torch.device,
+    batch_size: int = 4096,
+) -> tuple[np.ndarray, np.ndarray]:
+    model = model.to(device)
+    model.eval()
+    all_logits = []
+    with torch.no_grad():
+        for start in range(0, len(seqs), batch_size):
+            batch = torch.tensor(
+                seqs[start:start + batch_size], dtype=torch.float32, device=device,
+            )
+            all_logits.append(model(batch).cpu())
+    model = model.cpu()
+
+    logits = torch.cat(all_logits, dim=0)
+    probs = torch.softmax(logits, dim=-1).numpy()
+    preds = np.argmax(probs, axis=-1) + 1
+    return preds, probs
+
+
 def _train_stage1_cell(
     X_train: np.ndarray,
     y_train: np.ndarray,
@@ -318,10 +422,12 @@ def _ensemble_predict_proba(models: list[RandomForestClassifier], X: np.ndarray)
 
 
 class PerBandPipeline:
-    def __init__(self, persistent_slab_model: str = "rf"):
+    def __init__(self, persistent_slab_model: str = "rf", stage2_model: str = "rf"):
         self.persistent_slab_model = persistent_slab_model
+        self.stage2_model = stage2_model
         self.stage1_ensembles_: dict[str, dict[str, list[RandomForestClassifier]]] = {}
         self.stage2_models_: dict[str, RandomForestClassifier] = {}
+        self.stage2_gru_models_: dict[str, DangerLevelGRU] = {}
         self.transformer_models_: dict[str, PersistentSlabTransformer] = {}
         self.feature_names_: list[str] = []
         self.s2_feature_names_: dict[str, list[str]] = {}
@@ -420,13 +526,83 @@ class PerBandPipeline:
         y_s2_train = splits["s2_train"]["danger_level"].values.astype(int)
         y_s2_train = np.clip(y_s2_train, 1, 4)
 
-        clf = RandomForestClassifier(
-            **STAGE2_DEFAULTS,
-            class_weight="balanced",
-            n_jobs=-1,
-        )
-        clf.fit(X_s2_full, y_s2_train)
-        self.stage2_models_[band] = clf
+        if self.stage2_model == "gru":
+            s2_train_sorted = splits["s2_train"].sort_values(
+                ["station_id", "date"],
+            ).reset_index(drop=True)
+            X_s2_sorted = s2_train_sorted[feat_cols].values.astype(np.float64)
+            np.nan_to_num(X_s2_sorted, copy=False, nan=0.0)
+
+            s1_probs_sorted = {}
+            for pt in PROBLEM_TYPE_FLAGS:
+                if pt == "persistent_slab" and self.persistent_slab_model == "transformer":
+                    s1_probs_sorted[pt] = _transformer_predict_proba(
+                        self.transformer_models_[band], s2_train_sorted,
+                        feat_cols, TRANSFORMER_LOOKBACK, _get_device(),
+                    )
+                else:
+                    s1_probs_sorted[pt] = _ensemble_predict_proba(
+                        ensembles[pt], X_s2_sorted,
+                    )
+            s1_sorted_arr = np.column_stack(
+                [s1_probs_sorted[pt] for pt in PROBLEM_TYPE_FLAGS],
+            )
+
+            y_sorted = s2_train_sorted["danger_level"].values.astype(int)
+            y_sorted = np.clip(y_sorted, 1, 4)
+            stations_sorted = s2_train_sorted["station_id"].values
+
+            train_seqs_s2, train_idx_s2 = build_s2_sequences(
+                X_s2_sorted, s1_sorted_arr, stations_sorted, GRU_LOOKBACK,
+            )
+            train_labels_s2 = y_sorted[train_idx_s2]
+
+            val_seqs_s2 = np.zeros((0, GRU_LOOKBACK, train_seqs_s2.shape[2]))
+            val_labels_s2 = np.array([], dtype=np.int64)
+            if len(splits["s2_val"]) > 0:
+                s2_val_sorted = splits["s2_val"].sort_values(
+                    ["station_id", "date"],
+                ).reset_index(drop=True)
+                X_val_sorted = s2_val_sorted[feat_cols].values.astype(np.float64)
+                np.nan_to_num(X_val_sorted, copy=False, nan=0.0)
+                s1_val_probs = {}
+                for pt in PROBLEM_TYPE_FLAGS:
+                    if pt == "persistent_slab" and self.persistent_slab_model == "transformer":
+                        s1_val_probs[pt] = _transformer_predict_proba(
+                            self.transformer_models_[band], s2_val_sorted,
+                            feat_cols, TRANSFORMER_LOOKBACK, _get_device(),
+                        )
+                    else:
+                        s1_val_probs[pt] = _ensemble_predict_proba(
+                            ensembles[pt], X_val_sorted,
+                        )
+                s1_val_arr = np.column_stack(
+                    [s1_val_probs[pt] for pt in PROBLEM_TYPE_FLAGS],
+                )
+                y_val_sorted = s2_val_sorted["danger_level"].values.astype(int)
+                y_val_sorted = np.clip(y_val_sorted, 1, 4)
+                stations_val = s2_val_sorted["station_id"].values
+                val_seqs_s2, val_idx_s2 = build_s2_sequences(
+                    X_val_sorted, s1_val_arr, stations_val, GRU_LOOKBACK,
+                )
+                if len(val_seqs_s2) > 0:
+                    val_labels_s2 = y_val_sorted[val_idx_s2]
+
+            gru_input_size = train_seqs_s2.shape[2]
+            gru_model = _train_gru_stage2(
+                train_seqs_s2, train_labels_s2,
+                val_seqs_s2, val_labels_s2,
+                input_size=gru_input_size, device=_get_device(),
+            )
+            self.stage2_gru_models_[band] = gru_model
+        else:
+            clf = RandomForestClassifier(
+                **STAGE2_DEFAULTS,
+                class_weight="balanced",
+                n_jobs=-1,
+            )
+            clf.fit(X_s2_full, y_s2_train)
+            self.stage2_models_[band] = clf
 
         val_metrics = self._evaluate_stage2(
             band, splits["s2_val"], feat_cols,
@@ -517,12 +693,36 @@ class PerBandPipeline:
         np.nan_to_num(X, copy=False, nan=0.0)
 
         s1_arr = np.column_stack([s1_probs[pt] for pt in PROBLEM_TYPE_FLAGS])
-        X_full = np.hstack([X, s1_arr])
 
-        y_true = eval_df["danger_level"].values.astype(int)
-        y_true = np.clip(y_true, 1, 4)
+        y_true_all = eval_df["danger_level"].values.astype(int)
+        y_true_all = np.clip(y_true_all, 1, 4)
 
-        y_pred = self.stage2_models_[band].predict(X_full)
+        if self.stage2_model == "gru" and band in self.stage2_gru_models_:
+            df_sorted = eval_df.sort_values(
+                ["station_id", "date"],
+            ).reset_index(drop=True)
+            X_sorted = df_sorted[feat_cols].values.astype(np.float64)
+            np.nan_to_num(X_sorted, copy=False, nan=0.0)
+            s1_probs_sorted = self._get_s1_probs(band, df_sorted, feat_cols)
+            s1_sorted = np.column_stack(
+                [s1_probs_sorted[pt] for pt in PROBLEM_TYPE_FLAGS],
+            )
+            stations = df_sorted["station_id"].values
+            seqs, seq_idx = build_s2_sequences(
+                X_sorted, s1_sorted, stations, GRU_LOOKBACK,
+            )
+            if len(seqs) == 0:
+                return {"macro_f1": 0.0, "n_samples": 0}
+            y_true_sorted = df_sorted["danger_level"].values.astype(int)
+            y_true_sorted = np.clip(y_true_sorted, 1, 4)
+            y_true = y_true_sorted[seq_idx]
+            y_pred, _ = _gru_stage2_predict(
+                self.stage2_gru_models_[band], seqs, _get_device(),
+            )
+        else:
+            X_full = np.hstack([X, s1_arr])
+            y_true = y_true_all
+            y_pred = self.stage2_models_[band].predict(X_full)
 
         present = sorted(set(y_true) | set(y_pred))
         macro_f1 = float(
@@ -566,6 +766,48 @@ class PerBandPipeline:
 
         s1_probs = self._get_s1_probs(band, df, feat_cols)
 
+        if self.stage2_model == "gru" and band in self.stage2_gru_models_:
+            df_sorted = df.sort_values(["station_id", "date"]).reset_index(drop=True)
+            X_sorted = df_sorted[feat_cols].values.astype(np.float64)
+            np.nan_to_num(X_sorted, copy=False, nan=0.0)
+            s1_sorted_probs = self._get_s1_probs(band, df_sorted, feat_cols)
+            s1_sorted_arr = np.column_stack(
+                [s1_sorted_probs[pt] for pt in PROBLEM_TYPE_FLAGS],
+            )
+            stations = df_sorted["station_id"].values
+            seqs, seq_idx = build_s2_sequences(
+                X_sorted, s1_sorted_arr, stations, GRU_LOOKBACK,
+            )
+
+            n = len(df)
+            all_preds = np.ones(n, dtype=int)
+            all_proba = np.zeros((n, 4), dtype=np.float64)
+            all_proba[:, 0] = 1.0
+
+            if len(seqs) > 0:
+                preds, probs = _gru_stage2_predict(
+                    self.stage2_gru_models_[band], seqs, _get_device(),
+                )
+                sort_positions = np.argsort(
+                    df[["station_id", "date"]].apply(tuple, axis=1).values,
+                )
+                unsort = np.argsort(sort_positions)
+                sorted_preds = np.ones(n, dtype=int)
+                sorted_proba = np.zeros((n, 4), dtype=np.float64)
+                sorted_proba[:, 0] = 1.0
+                sorted_preds[seq_idx] = preds
+                sorted_proba[seq_idx] = probs
+                all_preds = sorted_preds[unsort]
+                all_proba = sorted_proba[unsort]
+
+            return {
+                "danger_level": all_preds.tolist(),
+                "danger_proba": all_proba,
+                "problem_type_probs": {
+                    pt: s1_probs[pt].tolist() for pt in PROBLEM_TYPE_FLAGS
+                },
+            }
+
         s1_arr = np.column_stack([s1_probs[pt] for pt in PROBLEM_TYPE_FLAGS])
         X_full = np.hstack([X, s1_arr])
 
@@ -594,6 +836,8 @@ class PerBandPipeline:
         bands = set(self.stage1_ensembles_.keys())
         if self.transformer_models_:
             bands |= set(self.transformer_models_.keys())
+        if self.stage2_gru_models_:
+            bands |= set(self.stage2_gru_models_.keys())
 
         for band in bands:
             band_dir = path / band
@@ -608,18 +852,31 @@ class PerBandPipeline:
             if band in self.stage2_models_:
                 joblib.dump(self.stage2_models_[band], band_dir / "stage2_model.joblib")
 
+            if band in self.stage2_gru_models_:
+                torch.save(
+                    self.stage2_gru_models_[band].state_dict(),
+                    band_dir / "gru_stage2.pt",
+                )
+
             if band in self.transformer_models_:
                 torch.save(
                     self.transformer_models_[band].state_dict(),
                     band_dir / "transformer.pt",
                 )
 
+        gru_input_size = 0
+        if self.stage2_gru_models_:
+            first_gru = next(iter(self.stage2_gru_models_.values()))
+            gru_input_size = first_gru.gru.input_size
+
         meta = {
             "feature_names": self.feature_names_,
             "s2_feature_names": self.s2_feature_names_,
             "bands": sorted(bands),
             "persistent_slab_model": self.persistent_slab_model,
+            "stage2_model": self.stage2_model,
             "transformer_input_size": len(self.feature_names_),
+            "gru_input_size": gru_input_size,
             "saved_at": datetime.datetime.now(datetime.UTC).isoformat(),
         }
         (path / "meta.json").write_text(json.dumps(meta, default=str))
@@ -630,11 +887,16 @@ class PerBandPipeline:
         meta = json.loads((path / "meta.json").read_text())
 
         persistent_slab_model = meta.get("persistent_slab_model", "rf")
-        instance = cls(persistent_slab_model=persistent_slab_model)
+        stage2_model = meta.get("stage2_model", "rf")
+        instance = cls(
+            persistent_slab_model=persistent_slab_model,
+            stage2_model=stage2_model,
+        )
         instance.feature_names_ = meta["feature_names"]
         instance.s2_feature_names_ = meta["s2_feature_names"]
 
         input_size = meta.get("transformer_input_size", 99)
+        gru_input_size = meta.get("gru_input_size", 0)
 
         for band in meta["bands"]:
             band_dir = path / band
@@ -646,6 +908,15 @@ class PerBandPipeline:
             s2_path = band_dir / "stage2_model.joblib"
             if s2_path.exists():
                 instance.stage2_models_[band] = joblib.load(s2_path)
+
+            gru_path = band_dir / "gru_stage2.pt"
+            if gru_path.exists() and gru_input_size > 0:
+                gru = DangerLevelGRU(input_size=gru_input_size)
+                gru.load_state_dict(
+                    torch.load(gru_path, map_location="cpu", weights_only=True),
+                )
+                gru.eval()
+                instance.stage2_gru_models_[band] = gru
 
             transformer_path = band_dir / "transformer.pt"
             if transformer_path.exists():

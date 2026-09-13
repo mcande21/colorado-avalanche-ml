@@ -175,3 +175,234 @@ class TestSerialization:
             np.testing.assert_array_equal(
                 orig["danger_level"], loaded_preds["danger_level"]
             )
+
+
+def _make_sequential_per_band_data(
+    n_per_band: int = 300,
+    n_stations: int = 3,
+    rng_seed: int = 42,
+) -> pd.DataFrame:
+    """Create synthetic data with multiple stations for sequence construction."""
+    rng = np.random.RandomState(rng_seed)
+    weather_cols = get_feature_columns()
+    physics_cols = list(PHYSICS_FEATURES)
+    frames = []
+    days_per_station = n_per_band // n_stations
+
+    for band in ELEVATION_BANDS:
+        for s in range(n_stations):
+            data: dict[str, np.ndarray] = {}
+            n = days_per_station
+            for col in weather_cols:
+                data[col] = rng.randn(n).astype(np.float64)
+            for col in physics_cols:
+                data[col] = rng.randn(n).astype(np.float64)
+
+            data["precip_sum_72h"] = rng.uniform(0, 5, n)
+            data["temp_gradient_days"] = rng.uniform(0, 30, n)
+            data["temp_mean_24h"] = rng.uniform(-10, 50, n)
+
+            data["storm_slab"] = (data["precip_sum_72h"] > 2.5).astype(int)
+            data["persistent_slab"] = (data["temp_gradient_days"] > 15).astype(int)
+            data["loose_wet"] = (data["temp_mean_24h"] > 35).astype(int)
+
+            danger = np.ones(n, dtype=int)
+            danger[data["precip_sum_72h"] > 2.0] = 2
+            danger[data["precip_sum_72h"] > 3.5] = 3
+            danger[data["temp_gradient_days"] > 25] = 4
+            data["danger_level"] = danger
+
+            base = datetime.date(2015, 11, 1)
+            data["date"] = pd.array(
+                [base + datetime.timedelta(days=int(i)) for i in range(n)]
+            )
+            data["station_id"] = np.array([f"STATION_{s:02d}"] * n)
+            data["elevation_band"] = np.array([band] * n)
+            data["zone_id"] = np.array(["ZONE_01"] * n)
+            frames.append(pd.DataFrame(data))
+
+    return pd.concat(frames, ignore_index=True)
+
+
+class TestHybridStage1UsesTransformer:
+    def test_hybrid_stage1_uses_transformer_for_persistent_slab(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+
+        assert pipeline.persistent_slab_model == "transformer"
+
+        pipeline.train(df)
+
+        for band in ELEVATION_BANDS:
+            assert band in pipeline.transformer_models_
+            model = pipeline.transformer_models_[band]
+            assert hasattr(model, "transformer")
+
+
+class TestHybridStage1UsesRFForOthers:
+    def test_hybrid_stage1_uses_rf_for_other_problem_types(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+        pipeline.train(df)
+
+        for band in ELEVATION_BANDS:
+            for pt in ["storm_slab", "loose_wet"]:
+                assert pt in pipeline.stage1_ensembles_[band]
+                models = pipeline.stage1_ensembles_[band][pt]
+                assert len(models) >= 1
+            assert "persistent_slab" not in pipeline.stage1_ensembles_[band]
+
+
+class TestHybridStage1PredictionsShape:
+    def test_hybrid_stage1_predictions_shape(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+        pipeline.train(df)
+
+        for band in ELEVATION_BANDS:
+            test_df = df[df["elevation_band"] == band].iloc[:10].copy()
+            preds = pipeline.predict(test_df, band)
+            for pt in PROBLEM_TYPE_FLAGS:
+                assert pt in preds["problem_type_probs"]
+                probs = preds["problem_type_probs"][pt]
+                assert len(probs) == 10
+                for p in probs:
+                    assert 0.0 <= p <= 1.0
+
+
+class TestHybridStage2ReceivesTransformerPredictions:
+    def test_hybrid_stage2_receives_transformer_predictions(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+        results = pipeline.train(df)
+
+        for band in ELEVATION_BANDS:
+            s2_features = results[band]["s2_feature_columns"]
+            assert "persistent_slab_prob" in s2_features
+            assert "storm_slab_prob" in s2_features
+            assert "loose_wet_prob" in s2_features
+            for pt in PROBLEM_TYPE_FLAGS:
+                assert pt not in s2_features
+
+
+class TestHybridPipelineEndToEnd:
+    def test_hybrid_pipeline_end_to_end(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+        results = pipeline.train(df)
+
+        assert len(results) == 3
+        for band in ELEVATION_BANDS:
+            assert "stage2_val_metrics" in results[band]
+            assert "stage2_test_metrics" in results[band]
+            assert results[band]["stage2_test_metrics"]["macro_f1"] >= 0.0
+
+            test_df = df[df["elevation_band"] == band].iloc[:10].copy()
+            preds = pipeline.predict(test_df, band)
+            assert len(preds["danger_level"]) == 10
+            for dl in preds["danger_level"]:
+                assert 1 <= dl <= 4
+
+
+class TestHybridPipelineSerialization:
+    def test_hybrid_pipeline_serialization(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(persistent_slab_model="transformer")
+        pipeline.train(df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = Path(tmpdir) / "hybrid_pipeline"
+            pipeline.save(save_path)
+
+            loaded = PerBandPipeline.load(save_path)
+
+            assert loaded.persistent_slab_model == "transformer"
+            assert len(loaded.transformer_models_) == 3
+
+            test_df = df[df["elevation_band"] == "above_treeline"].iloc[:10].copy()
+            orig = pipeline.predict(test_df, "above_treeline")
+            loaded_preds = loaded.predict(test_df, "above_treeline")
+
+            np.testing.assert_array_equal(
+                orig["danger_level"], loaded_preds["danger_level"]
+            )
+
+
+class TestGRUStage2PipelineEndToEnd:
+    def test_pipeline_gru_stage2_trains_and_predicts(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(
+            persistent_slab_model="transformer", stage2_model="gru",
+        )
+        results = pipeline.train(df)
+
+        assert len(results) == 3
+        for band in ELEVATION_BANDS:
+            assert "stage2_val_metrics" in results[band]
+            assert results[band]["stage2_val_metrics"]["macro_f1"] >= 0.0
+
+            test_df = df[df["elevation_band"] == band].iloc[:10].copy()
+            preds = pipeline.predict(test_df, band)
+            assert len(preds["danger_level"]) == 10
+            for dl in preds["danger_level"]:
+                assert 1 <= dl <= 4
+            assert preds["danger_proba"].shape == (10, 4)
+            row_sums = preds["danger_proba"].sum(axis=1)
+            np.testing.assert_allclose(row_sums, 1.0, atol=1e-5)
+
+
+class TestGRUStage2Serialization:
+    def test_gru_pipeline_save_load_roundtrip(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(
+            persistent_slab_model="transformer", stage2_model="gru",
+        )
+        pipeline.train(df)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            save_path = Path(tmpdir) / "gru_pipeline"
+            pipeline.save(save_path)
+            loaded = PerBandPipeline.load(save_path)
+
+            assert loaded.stage2_model == "gru"
+
+            test_df = df[df["elevation_band"] == "above_treeline"].iloc[:10].copy()
+            orig = pipeline.predict(test_df, "above_treeline")
+            loaded_preds = loaded.predict(test_df, "above_treeline")
+
+            np.testing.assert_array_equal(
+                orig["danger_level"], loaded_preds["danger_level"],
+            )
+
+
+class TestGRUReceivesS1ProbsInPipeline:
+    def test_s2_features_include_s1_probs(self):
+        from avalanche_ml.models.per_band_pipeline import PerBandPipeline
+
+        df = _make_sequential_per_band_data(n_per_band=300, n_stations=3)
+        pipeline = PerBandPipeline(
+            persistent_slab_model="transformer", stage2_model="gru",
+        )
+        results = pipeline.train(df)
+
+        for band in ELEVATION_BANDS:
+            s2_features = results[band]["s2_feature_columns"]
+            assert "persistent_slab_prob" in s2_features
+            assert "storm_slab_prob" in s2_features
+            assert "loose_wet_prob" in s2_features
