@@ -42,6 +42,20 @@ def create_physics_features_table(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
 
+    # CREATE TABLE IF NOT EXISTS is a no-op on an already-existing table, so a
+    # table created before a feature was added to PHYSICS_FEATURES is missing
+    # that column. Backfill any missing columns onto the existing table.
+    existing_cols = {
+        row[0]
+        for row in conn.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'physics_features'"
+        ).fetchall()
+    }
+    for col in PHYSICS_FEATURES:
+        if col not in existing_cols:
+            conn.execute(f"ALTER TABLE physics_features ADD COLUMN {col} DOUBLE")
+
 
 def _season_start(d: datetime.date) -> datetime.date:
     if d.month >= 10:
