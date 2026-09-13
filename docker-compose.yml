@@ -1,0 +1,10 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DUCKDB_PATH=/data/avalanche.duckdb
+      - MODEL_PATH=/data/model
+    volumes:
+      - ./data:/data
