@@ -246,18 +246,18 @@ class TestTemporalSplit:
         _insert_zone_mapping(alignment_db, "Z1", "S1")
         dates_and_levels = [
             ("2020-01-15", 2),
-            ("2022-12-01", 3),
             ("2024-01-15", 3),
             ("2024-11-01", 4),
+            ("2025-03-01", 3),
         ]
         for date_str, level in dates_and_levels:
             _seed_complete_row(alignment_db, "S1", "Z1", date_str,
                                "above_treeline", level)
         assemble_training_matrix(alignment_db)
         train, val, test = temporal_split(alignment_db)
-        assert len(train) == 2   # 2020, 2022 dates <= 2023-06-30
-        assert len(val) == 1     # 2024-01-15 in val window
-        assert len(test) == 1    # 2024-11-01 in test window
+        assert len(train) == 2   # 2020, 2024-01 dates <= 2024-06-30
+        assert len(val) == 1     # 2024-11-01 in val window
+        assert len(test) == 1    # 2025-03-01 in test window
 
     def test_split_returns_dataframes_with_columns(self, seeded_db):
         assemble_training_matrix(seeded_db)

@@ -22,6 +22,7 @@ def snotel_stations_response():
             "elevation": 11300.0,
             "huc": "10190005",
             "stateCode": "CO",
+            "networkCode": "SNTL",
             "countyName": "Clear Creek",
         },
         {
@@ -32,6 +33,7 @@ def snotel_stations_response():
             "elevation": 10520.0,
             "huc": "10190004",
             "stateCode": "CO",
+            "networkCode": "SNTL",
             "countyName": "Summit",
         },
         {
@@ -42,6 +44,7 @@ def snotel_stations_response():
             "elevation": 10040.0,
             "huc": "13020101",
             "stateCode": "CO",
+            "networkCode": "SNTL",
             "countyName": "Conejos",
         },
     ]
@@ -49,35 +52,48 @@ def snotel_stations_response():
 
 @pytest.fixture
 def snotel_daily_response():
-    """Mock AWDB API response for daily data."""
-    return [
-        {
-            "stationTriplet": "335:CO:SNTL",
-            "beginDate": "2024-01-01",
-            "endDate": "2024-01-03",
-            "values": [
-                {"date": "2024-01-01", "swe": 12.5, "snowDepth": 38.0,
-                 "airTempMin": 5.0, "airTempMax": 22.0, "airTempAvg": 13.5,
-                 "precipIncrement": 0.3},
-                {"date": "2024-01-02", "swe": 12.8, "snowDepth": 39.0,
-                 "airTempMin": -2.0, "airTempMax": 18.0, "airTempAvg": 8.0,
-                 "precipIncrement": 0.5},
-                {"date": "2024-01-03", "swe": 13.5, "snowDepth": 41.0,
-                 "airTempMin": 10.0, "airTempMax": 28.0, "airTempAvg": 19.0,
-                 "precipIncrement": 0.8},
-            ],
-        },
-    ]
+    """Mock AWDB API response for daily data (pivot format)."""
+    return [{
+        "data": [
+            {"stationElement": {"elementCode": "WTEQ"}, "values": [
+                {"date": "2024-01-01", "value": 12.5},
+                {"date": "2024-01-02", "value": 12.8},
+                {"date": "2024-01-03", "value": 13.5},
+            ]},
+            {"stationElement": {"elementCode": "SNWD"}, "values": [
+                {"date": "2024-01-01", "value": 38.0},
+                {"date": "2024-01-02", "value": 39.0},
+                {"date": "2024-01-03", "value": 41.0},
+            ]},
+            {"stationElement": {"elementCode": "TMIN"}, "values": [
+                {"date": "2024-01-01", "value": 5.0},
+                {"date": "2024-01-02", "value": -2.0},
+                {"date": "2024-01-03", "value": 10.0},
+            ]},
+            {"stationElement": {"elementCode": "TMAX"}, "values": [
+                {"date": "2024-01-01", "value": 22.0},
+                {"date": "2024-01-02", "value": 18.0},
+                {"date": "2024-01-03", "value": 28.0},
+            ]},
+            {"stationElement": {"elementCode": "TAVG"}, "values": [
+                {"date": "2024-01-01", "value": 13.5},
+                {"date": "2024-01-02", "value": 8.0},
+                {"date": "2024-01-03", "value": 19.0},
+            ]},
+            {"stationElement": {"elementCode": "PRCP"}, "values": [
+                {"date": "2024-01-01", "value": 0.3},
+                {"date": "2024-01-02", "value": 0.5},
+                {"date": "2024-01-03", "value": 0.8},
+            ]},
+        ],
+    }]
 
 
 @pytest.fixture
 def snotel_hourly_response():
     """Mock AWDB API response for hourly data."""
-    return [
-        {
-            "stationTriplet": "335:CO:SNTL",
-            "beginDate": "2024-01-01 00:00",
-            "endDate": "2024-01-01 03:00",
+    return [{
+        "data": [{
             "values": [
                 {"dateTime": "2024-01-01 00:00", "swe": 12.5, "snowDepth": 38.0,
                  "airTemp": 15.0, "precipAccum": 0.0},
@@ -88,5 +104,5 @@ def snotel_hourly_response():
                 {"dateTime": "2024-01-01 03:00", "swe": 12.6, "snowDepth": 38.3,
                  "airTemp": 11.0, "precipAccum": 0.3},
             ],
-        },
-    ]
+        }],
+    }]

@@ -334,6 +334,11 @@ class TestOapFallback:
     async def test_caic_failure_falls_back_to_oap(
         self, client, caic_db, oap_csv_content
     ):
+        from unittest.mock import AsyncMock
+
+        client.ingest_avorg_danger_ratings = AsyncMock(
+            side_effect=httpx.ConnectError("avorg unavailable")
+        )
         respx.get(f"{CAIC_API_BASE}/products/all").mock(
             return_value=httpx.Response(503)
         )

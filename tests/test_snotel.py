@@ -125,7 +125,7 @@ async def test_ingest_daily_upserts_on_overlap(client, snotel_db, snotel_daily_r
         resolution="daily",
     )
     updated = copy.deepcopy(snotel_daily_response)
-    updated[0]["values"][0]["swe"] = 99.9
+    updated[0]["data"][0]["values"][0]["value"] = 99.9
     route.mock(return_value=httpx.Response(200, json=updated))
     await client.ingest(
         station_id="335:CO:SNTL",
@@ -165,16 +165,26 @@ async def test_ingest_hourly_stores_readings(client, snotel_db, snotel_hourly_re
 
 @respx.mock
 async def test_ingest_flags_negative_swe(client, snotel_db):
-    bad_response = [{
-        "stationTriplet": "335:CO:SNTL",
-        "beginDate": "2024-01-01",
-        "endDate": "2024-01-01",
-        "values": [
-            {"date": "2024-01-01", "swe": -5.0, "snowDepth": 38.0,
-             "airTempMin": 5.0, "airTempMax": 22.0, "airTempAvg": 13.5,
-             "precipIncrement": 0.3},
-        ],
-    }]
+    bad_response = [{"data": [
+        {"stationElement": {"elementCode": "WTEQ"}, "values": [
+            {"date": "2024-01-01", "value": -5.0},
+        ]},
+        {"stationElement": {"elementCode": "SNWD"}, "values": [
+            {"date": "2024-01-01", "value": 38.0},
+        ]},
+        {"stationElement": {"elementCode": "TMIN"}, "values": [
+            {"date": "2024-01-01", "value": 5.0},
+        ]},
+        {"stationElement": {"elementCode": "TMAX"}, "values": [
+            {"date": "2024-01-01", "value": 22.0},
+        ]},
+        {"stationElement": {"elementCode": "TAVG"}, "values": [
+            {"date": "2024-01-01", "value": 13.5},
+        ]},
+        {"stationElement": {"elementCode": "PRCP"}, "values": [
+            {"date": "2024-01-01", "value": 0.3},
+        ]},
+    ]}]
     respx.get(f"{AWDB_BASE}/data").mock(
         return_value=httpx.Response(200, json=bad_response)
     )
@@ -193,16 +203,26 @@ async def test_ingest_flags_negative_swe(client, snotel_db):
 
 @respx.mock
 async def test_ingest_flags_temp_out_of_range(client, snotel_db):
-    bad_response = [{
-        "stationTriplet": "335:CO:SNTL",
-        "beginDate": "2024-01-01",
-        "endDate": "2024-01-01",
-        "values": [
-            {"date": "2024-01-01", "swe": 12.0, "snowDepth": 38.0,
-             "airTempMin": -70.0, "airTempMax": 22.0, "airTempAvg": -24.0,
-             "precipIncrement": 0.3},
-        ],
-    }]
+    bad_response = [{"data": [
+        {"stationElement": {"elementCode": "WTEQ"}, "values": [
+            {"date": "2024-01-01", "value": 12.0},
+        ]},
+        {"stationElement": {"elementCode": "SNWD"}, "values": [
+            {"date": "2024-01-01", "value": 38.0},
+        ]},
+        {"stationElement": {"elementCode": "TMIN"}, "values": [
+            {"date": "2024-01-01", "value": -70.0},
+        ]},
+        {"stationElement": {"elementCode": "TMAX"}, "values": [
+            {"date": "2024-01-01", "value": 22.0},
+        ]},
+        {"stationElement": {"elementCode": "TAVG"}, "values": [
+            {"date": "2024-01-01", "value": -24.0},
+        ]},
+        {"stationElement": {"elementCode": "PRCP"}, "values": [
+            {"date": "2024-01-01", "value": 0.3},
+        ]},
+    ]}]
     respx.get(f"{AWDB_BASE}/data").mock(
         return_value=httpx.Response(200, json=bad_response)
     )
@@ -221,19 +241,32 @@ async def test_ingest_flags_temp_out_of_range(client, snotel_db):
 
 @respx.mock
 async def test_ingest_flags_discontinuity(client, snotel_db):
-    disc_response = [{
-        "stationTriplet": "335:CO:SNTL",
-        "beginDate": "2024-01-01",
-        "endDate": "2024-01-02",
-        "values": [
-            {"date": "2024-01-01", "swe": 10.0, "snowDepth": 30.0,
-             "airTempMin": 5.0, "airTempMax": 22.0, "airTempAvg": 13.5,
-             "precipIncrement": 0.3},
-            {"date": "2024-01-02", "swe": 35.0, "snowDepth": 30.0,
-             "airTempMin": 5.0, "airTempMax": 22.0, "airTempAvg": 13.5,
-             "precipIncrement": 0.3},
-        ],
-    }]
+    disc_response = [{"data": [
+        {"stationElement": {"elementCode": "WTEQ"}, "values": [
+            {"date": "2024-01-01", "value": 10.0},
+            {"date": "2024-01-02", "value": 35.0},
+        ]},
+        {"stationElement": {"elementCode": "SNWD"}, "values": [
+            {"date": "2024-01-01", "value": 30.0},
+            {"date": "2024-01-02", "value": 30.0},
+        ]},
+        {"stationElement": {"elementCode": "TMIN"}, "values": [
+            {"date": "2024-01-01", "value": 5.0},
+            {"date": "2024-01-02", "value": 5.0},
+        ]},
+        {"stationElement": {"elementCode": "TMAX"}, "values": [
+            {"date": "2024-01-01", "value": 22.0},
+            {"date": "2024-01-02", "value": 22.0},
+        ]},
+        {"stationElement": {"elementCode": "TAVG"}, "values": [
+            {"date": "2024-01-01", "value": 13.5},
+            {"date": "2024-01-02", "value": 13.5},
+        ]},
+        {"stationElement": {"elementCode": "PRCP"}, "values": [
+            {"date": "2024-01-01", "value": 0.3},
+            {"date": "2024-01-02", "value": 0.3},
+        ]},
+    ]}]
     respx.get(f"{AWDB_BASE}/data").mock(
         return_value=httpx.Response(200, json=disc_response)
     )
@@ -302,16 +335,26 @@ async def test_incremental_ingest_uses_watermark(client, snotel_db, snotel_daily
         resolution="daily",
     )
 
-    new_response = [{
-        "stationTriplet": "335:CO:SNTL",
-        "beginDate": "2024-01-04",
-        "endDate": "2024-01-04",
-        "values": [
-            {"date": "2024-01-04", "swe": 14.0, "snowDepth": 42.0,
-             "airTempMin": 0.0, "airTempMax": 20.0, "airTempAvg": 10.0,
-             "precipIncrement": 0.2},
-        ],
-    }]
+    new_response = [{"data": [
+        {"stationElement": {"elementCode": "WTEQ"}, "values": [
+            {"date": "2024-01-04", "value": 14.0},
+        ]},
+        {"stationElement": {"elementCode": "SNWD"}, "values": [
+            {"date": "2024-01-04", "value": 42.0},
+        ]},
+        {"stationElement": {"elementCode": "TMIN"}, "values": [
+            {"date": "2024-01-04", "value": 0.0},
+        ]},
+        {"stationElement": {"elementCode": "TMAX"}, "values": [
+            {"date": "2024-01-04", "value": 20.0},
+        ]},
+        {"stationElement": {"elementCode": "TAVG"}, "values": [
+            {"date": "2024-01-04", "value": 10.0},
+        ]},
+        {"stationElement": {"elementCode": "PRCP"}, "values": [
+            {"date": "2024-01-04", "value": 0.2},
+        ]},
+    ]}]
     respx.get(f"{AWDB_BASE}/data").mock(
         return_value=httpx.Response(200, json=new_response)
     )
@@ -412,16 +455,17 @@ async def test_empty_response_returns_zero(client, snotel_db):
 
 @respx.mock
 async def test_partial_data_stores_nulls(client, snotel_db):
-    partial_response = [{
-        "stationTriplet": "335:CO:SNTL",
-        "beginDate": "2024-01-01",
-        "endDate": "2024-01-01",
-        "values": [
-            {"date": "2024-01-01", "swe": 12.5, "snowDepth": None,
-             "airTempMin": 5.0, "airTempMax": None, "airTempAvg": None,
-             "precipIncrement": 0.3},
-        ],
-    }]
+    partial_response = [{"data": [
+        {"stationElement": {"elementCode": "WTEQ"}, "values": [
+            {"date": "2024-01-01", "value": 12.5},
+        ]},
+        {"stationElement": {"elementCode": "TMIN"}, "values": [
+            {"date": "2024-01-01", "value": 5.0},
+        ]},
+        {"stationElement": {"elementCode": "PRCP"}, "values": [
+            {"date": "2024-01-01", "value": 0.3},
+        ]},
+    ]}]
     respx.get(f"{AWDB_BASE}/data").mock(
         return_value=httpx.Response(200, json=partial_response)
     )

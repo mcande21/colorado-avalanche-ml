@@ -302,6 +302,7 @@ class TestDataLoader:
         _insert_data(conn, "DL", datetime.date(2023, 6, 15), 16, seed=100)
         _insert_data(conn, "DL", datetime.date(2023, 7, 1), 15, seed=101)
         _insert_data(conn, "DL", datetime.date(2024, 7, 1), 15, seed=102)
+        _insert_data(conn, "DL", datetime.date(2025, 2, 1), 15, seed=103)
         conn.close()
         train_ld, val_ld, test_ld = create_dataloaders(db_path, batch_size=4)
         assert len(train_ld.dataset) > 0
