@@ -23,6 +23,7 @@ models/
 *.joblib
 *.pt
 *.pth
+scripts/experiment_checkpoint.json
 
 # IDE
 .vscode/
