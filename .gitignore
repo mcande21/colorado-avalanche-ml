@@ -1,6 +1,7 @@
 # Data
 data/raw/
 data/processed/
+data/*.duckdb
 *.parquet
 *.grib2
 
@@ -14,7 +15,10 @@ dist/
 build/
 
 # ML artifacts
-mlflow/mlruns/
+mlflow/
+mlruns/
+mlflow.db
+models/
 *.pkl
 *.joblib
 *.pt
